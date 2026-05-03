@@ -10,6 +10,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\XenoAtom.MsBuildPipeLogger.Logger\XenoAtom.MsBuildPipeLogger.Logger.csproj" />
-    <ProjectReference Include="..\..\src\XenoAtom.MsBuildPipeLogger.Server\XenoAtom.MsBuildPipeLogger.Server.csproj" />
+    <ProjectReference Include="..\..\src\XenoAtom.MsBuildPipeLogger\XenoAtom.MsBuildPipeLogger.csproj" />
   </ItemGroup>
 </Project>

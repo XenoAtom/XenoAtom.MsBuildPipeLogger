@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>Receives MSBuild event data over pipes and includes an isolated MSBuild logger assembly.</Description>
+    <PackageTags>msbuild;logger;binarylog;pipe;named-pipe;build;dotnet;csharp;cross-platform</PackageTags>
+    <LoggerContentDirectory>XenoAtom.MsBuildPipeLogger</LoggerContentDirectory>
+    <LoggerAssemblyName>XenoAtom.MsBuildPipeLogger.Logger.dll</LoggerAssemblyName>
+    <LoggerAssemblyPath>..\XenoAtom.MsBuildPipeLogger.Logger\bin\$(Configuration)\netstandard2.0\$(LoggerAssemblyName)</LoggerAssemblyPath>
+    <!-- The logger assembly is intentionally copy-to-output content, not a NuGet reference. -->
+    <NoWarn>$(NoWarn);NU5100</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\img\XenoAtom.MsBuildPipeLogger.png" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\readme.md" Pack="true" PackagePath="/" />
+    <None Include="$(LoggerAssemblyPath)" Pack="true" PackagePath="contentFiles\any\any\$(LoggerContentDirectory)\" PackageCopyToOutput="true" PackageFlatten="false" CopyToOutputDirectory="PreserveNewest" TargetPath="$(LoggerContentDirectory)\$(LoggerAssemblyName)" Visible="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MinVer">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Build" />
+    <PackageReference Include="PolySharp">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XenoAtom.MsBuildPipeLogger.Logger\XenoAtom.MsBuildPipeLogger.Logger.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>XenoAtom.MsBuildPipeLogger.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

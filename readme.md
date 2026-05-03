@@ -2,21 +2,25 @@
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/XenoAtom/XenoAtom.MsBuildPipeLogger/main/img/XenoAtom.MsBuildPipeLogger.png">
 
-A pair of MSBuild logger/server packages that stream MSBuild event data to another process.
+A single package that lets one process run MSBuild with a bundled pipe logger while another process receives MSBuild event data in real time.
 
 ## ✨ Features
 
-- `XenoAtom.MsBuildPipeLogger.Logger`: an MSBuild logger that serializes build events using MSBuild's binary log event format.
-- `XenoAtom.MsBuildPipeLogger.Server`: a receiver that deserializes events and dispatches the normal MSBuild logging callbacks.
+- `XenoAtom.MsBuildPipeLogger`: receiver APIs that deserialize events and dispatch the normal MSBuild logging callbacks.
+- Includes the MSBuild logger assembly as isolated copy-to-output content under `XenoAtom.MsBuildPipeLogger/`.
+- Helper APIs return the bundled logger path/specification to pass directly to MSBuild.
 - Supports anonymous pipes and named pipes from a `netstandard2.0` logger assembly.
-- Nullable-enabled projects with package metadata/readme/icon configured for the two publishable packages.
+- Nullable-enabled projects with package metadata/readme/icon configured for the publishable package.
 
-## 📦 Packages
+## 📦 Package
 
-Only these projects are intended to be published:
+Install the single package:
 
-- `XenoAtom.MsBuildPipeLogger.Logger`
-- `XenoAtom.MsBuildPipeLogger.Server`
+```sh
+dotnet add package XenoAtom.MsBuildPipeLogger
+```
+
+The package copies `XenoAtom.MsBuildPipeLogger.Logger.dll` to an isolated `XenoAtom.MsBuildPipeLogger` output subfolder so MSBuild does not probe unrelated application assemblies from the logger directory.
 
 ## 📖 User Guide
 

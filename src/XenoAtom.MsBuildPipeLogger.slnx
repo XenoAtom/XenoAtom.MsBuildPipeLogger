@@ -17,7 +17,7 @@
   </Folder>
   <Project Path="XenoAtom.MsBuildPipeLogger.Logger/XenoAtom.MsBuildPipeLogger.Logger.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger.Logger.Tests/XenoAtom.MsBuildPipeLogger.Logger.Tests.csproj" />
-  <Project Path="XenoAtom.MsBuildPipeLogger.Server/XenoAtom.MsBuildPipeLogger.Server.csproj" />
+  <Project Path="XenoAtom.MsBuildPipeLogger/XenoAtom.MsBuildPipeLogger.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger.Tests/XenoAtom.MsBuildPipeLogger.Tests.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger.Tests.Client/XenoAtom.MsBuildPipeLogger.Tests.Client.csproj" />
 </Solution>

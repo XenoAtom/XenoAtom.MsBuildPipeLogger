@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <IsPackable>true</IsPackable>
+    <IsPackable>false</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <Description>MSBuild logger that streams build event data to XenoAtom.MsBuildPipeLogger.Server over pipes.</Description>
+    <Description>Internal MSBuild logger that streams build event data to XenoAtom.MsBuildPipeLogger over pipes.</Description>
     <PackageTags>msbuild;logger;binarylog;pipe;named-pipe;build;dotnet;csharp;cross-platform</PackageTags>
   </PropertyGroup>
   <ItemGroup>

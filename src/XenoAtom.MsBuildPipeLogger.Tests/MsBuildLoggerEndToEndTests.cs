@@ -72,7 +72,7 @@ public class MsBuildLoggerEndToEndTests
 
     private static Process CreateDotNetMsBuildProcess(string projectPath, string pipeName)
     {
-        var loggerAssemblyPath = typeof(PipeLogger).Assembly.Location;
+        var loggerParameters = $"name={pipeName}";
         var process = new Process();
         process.StartInfo.FileName = "dotnet";
         process.StartInfo.CreateNoWindow = true;
@@ -83,7 +83,7 @@ public class MsBuildLoggerEndToEndTests
         process.StartInfo.ArgumentList.Add(projectPath);
         process.StartInfo.ArgumentList.Add("/nologo");
         process.StartInfo.ArgumentList.Add("/nr:false");
-        process.StartInfo.ArgumentList.Add($"/logger:{typeof(PipeLogger).FullName},{loggerAssemblyPath};name={pipeName}");
+        process.StartInfo.ArgumentList.Add($"/logger:{PipeLoggerServer.GetLoggerSpecification(loggerParameters)}");
         return process;
     }
 
