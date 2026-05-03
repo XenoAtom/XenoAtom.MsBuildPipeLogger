@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">XenoAtom.MsBuildPipeLogger</title>
+  <desc id="desc">MSBuild text connected by a bright pipe to a compact log page on a dark gradient plate.</desc>
+  <defs>
+    <style>
+      :root {
+        --mpl-bg-0: #0A1022;
+        --mpl-bg-1: #160B2D;
+        --mpl-panel: #0F1A33;
+        --mpl-panel-2: #10172A;
+        --mpl-ink: #F4F8FF;
+        --mpl-muted: #BBD3FF;
+        --mpl-outline: #FFFFFF;
+        --mpl-outline-opacity: 0.14;
+        --mpl-shadow: #000000;
+        --mpl-shadow-opacity: 0.42;
+        --mpl-accent-0: #7C3AED;
+        --mpl-accent-1: #2563EB;
+        --mpl-accent-2: #06B6D4;
+        --mpl-pipe-0: #67E8F9;
+        --mpl-pipe-1: #22D3EE;
+        --mpl-pipe-2: #34D399;
+        --mpl-log-0: #FFF7D6;
+        --mpl-log-1: #FCD34D;
+        --mpl-log-2: #F97316;
+        --mpl-plate-stroke-opacity: 0.55;
+        --mpl-plate-ring-opacity: 0.60;
+        --mpl-shine-0-opacity: 0.18;
+        --mpl-shine-1-opacity: 0.06;
+      }
+    </style>
+
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="var(--mpl-bg-0)"/>
+      <stop offset="1" stop-color="var(--mpl-bg-1)"/>
+    </linearGradient>
+
+    <radialGradient id="shine" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(180 108) rotate(52) scale(360 280)">
+      <stop offset="0" stop-color="var(--mpl-outline)" stop-opacity="var(--mpl-shine-0-opacity)"/>
+      <stop offset="0.56" stop-color="var(--mpl-outline)" stop-opacity="var(--mpl-shine-1-opacity)"/>
+      <stop offset="1" stop-color="var(--mpl-outline)" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="accent" x1="76" y1="58" x2="440" y2="454" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="var(--mpl-accent-0)"/>
+      <stop offset="0.48" stop-color="var(--mpl-accent-1)"/>
+      <stop offset="1" stop-color="var(--mpl-accent-2)"/>
+    </linearGradient>
+
+    <linearGradient id="pipe" x1="90" y1="230" x2="422" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="var(--mpl-pipe-0)"/>
+      <stop offset="0.52" stop-color="var(--mpl-pipe-1)"/>
+      <stop offset="1" stop-color="var(--mpl-pipe-2)"/>
+    </linearGradient>
+
+    <linearGradient id="logPaper" x1="300" y1="226" x2="430" y2="394" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="var(--mpl-log-0)"/>
+      <stop offset="0.58" stop-color="var(--mpl-log-1)"/>
+      <stop offset="1" stop-color="var(--mpl-log-2)"/>
+    </linearGradient>
+
+    <linearGradient id="msText" x1="94" y1="112" x2="418" y2="154" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="var(--mpl-pipe-0)"/>
+      <stop offset="0.46" stop-color="var(--mpl-ink)"/>
+      <stop offset="1" stop-color="#C4B5FD"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="var(--mpl-shadow)" flood-opacity="var(--mpl-shadow-opacity)"/>
+    </filter>
+
+    <filter id="pipeGlow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#shine)"/>
+  <rect x="7" y="7" width="498" height="498" rx="105" fill="none" stroke="url(#accent)" stroke-opacity="var(--mpl-plate-stroke-opacity)" stroke-width="14"/>
+  <rect x="18" y="18" width="476" height="476" rx="96" fill="none" stroke="var(--mpl-outline)" stroke-opacity="var(--mpl-plate-ring-opacity)" stroke-width="3"/>
+
+  <g filter="url(#shadow)">
+    <!-- MSBuild command tile -->
+    <rect x="40" y="52" width="432" height="142" rx="40" fill="var(--mpl-panel)"/>
+    <rect x="40" y="52" width="432" height="142" rx="40" fill="none" stroke="url(#accent)" stroke-width="6"/>
+    <text x="256" y="148" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="86" font-weight="900" letter-spacing="-4" textLength="374" lengthAdjust="spacingAndGlyphs" fill="url(#msText)">MSBuild</text>
+
+    <!-- Bright pipe carrying build events -->
+    <g filter="url(#pipeGlow)">
+      <path d="M 106,260 H 194 C 238,260 234,320 278,320 H 382" stroke="url(#pipe)" stroke-width="30" stroke-linecap="round" fill="none"/>
+      <path d="M 106,260 H 194 C 238,260 234,320 278,320 H 382" stroke="var(--mpl-outline)" stroke-opacity="0.24" stroke-width="7" stroke-linecap="round" fill="none"/>
+      <circle cx="106" cy="260" r="30" fill="var(--mpl-panel-2)" stroke="url(#pipe)" stroke-width="10"/>
+      <circle cx="382" cy="320" r="30" fill="var(--mpl-panel-2)" stroke="url(#pipe)" stroke-width="10"/>
+      <circle cx="160" cy="260" r="7" fill="var(--mpl-ink)" fill-opacity="0.92"/>
+      <circle cx="220" cy="278" r="7" fill="var(--mpl-ink)" fill-opacity="0.82"/>
+      <circle cx="285" cy="320" r="7" fill="var(--mpl-ink)" fill-opacity="0.92"/>
+    </g>
+
+    <!-- Log page at the pipe destination -->
+    <g>
+      <path d="M 306,214 H 384 L 430,260 V 386 C 430,398 422,406 410,406 H 306 C 294,406 286,398 286,386 V 234 C 286,222 294,214 306,214 Z" fill="url(#logPaper)"/>
+      <path d="M 384,214 V 250 C 384,258 390,264 398,264 H 430" fill="none" stroke="#7C2D12" stroke-opacity="0.30" stroke-width="6" stroke-linejoin="round"/>
+      <path d="M 306,214 H 384 L 430,260 V 386 C 430,398 422,406 410,406 H 306 C 294,406 286,398 286,386 V 234 C 286,222 294,214 306,214 Z" fill="none" stroke="var(--mpl-outline)" stroke-opacity="0.34" stroke-width="3"/>
+      <g stroke="#7C2D12" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round">
+        <line x1="318" y1="292" x2="396" y2="292"/>
+        <line x1="318" y1="326" x2="402" y2="326"/>
+        <line x1="318" y1="360" x2="376" y2="360"/>
+      </g>
+    </g>
+
+    <!-- Compact product cue -->
+    <rect x="42" y="380" width="428" height="92" rx="46" fill="var(--mpl-panel-2)" stroke="url(#accent)" stroke-width="5"/>
+    <text x="256" y="449" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="62" font-weight="900" letter-spacing="0" textLength="340" lengthAdjust="spacingAndGlyphs" fill="var(--mpl-muted)">PIPE LOG</text>
+  </g>
+</svg>
