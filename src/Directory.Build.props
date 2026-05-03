@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);NU1701;CS8632</NoWarn>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MSTest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\XenoAtom.MsBuildPipeLogger.Logger\XenoAtom.MsBuildPipeLogger.Logger.csproj" />
+    <ProjectReference Include="..\..\src\XenoAtom.MsBuildPipeLogger.Server\XenoAtom.MsBuildPipeLogger.Server.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/doc/">
+    <File Path="../doc/readme.md" />
+  </Folder>
+  <Folder Name="/general/">
+    <File Path="../.editorconfig" />
+    <File Path="../.gitattributes" />
+    <File Path="../.github/workflows/ci.yml" />
+    <File Path="../.gitignore" />
+    <File Path="../AGENTS.md" />
+    <File Path="../license.txt" />
+    <File Path="../readme.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="dotnet-releaser.toml" />
+    <File Path="global.json" />
+  </Folder>
+  <Project Path="XenoAtom.MsBuildPipeLogger.Logger/XenoAtom.MsBuildPipeLogger.Logger.csproj" />
+  <Project Path="XenoAtom.MsBuildPipeLogger.Logger.Tests/XenoAtom.MsBuildPipeLogger.Logger.Tests.csproj" />
+  <Project Path="XenoAtom.MsBuildPipeLogger.Server/XenoAtom.MsBuildPipeLogger.Server.csproj" />
+  <Project Path="XenoAtom.MsBuildPipeLogger.Tests/XenoAtom.MsBuildPipeLogger.Tests.csproj" />
+  <Project Path="XenoAtom.MsBuildPipeLogger.Tests.Client/XenoAtom.MsBuildPipeLogger.Tests.Client.csproj" />
+</Solution>
