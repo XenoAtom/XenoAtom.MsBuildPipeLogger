@@ -1,7 +1,5 @@
-﻿using System;
-using System.IO.Pipes;
+using System;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace MsBuildPipeLogger
 {
@@ -38,6 +36,10 @@ namespace MsBuildPipeLogger
         // Returns the current state
         public static implicit operator bool(InterlockedBool interlockedBool)
         {
+            if (interlockedBool is null)
+            {
+                throw new ArgumentNullException(nameof(interlockedBool));
+            }
             return interlockedBool._set != 0;
         }
     }

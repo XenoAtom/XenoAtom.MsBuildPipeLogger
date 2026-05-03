@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Pipes;
@@ -7,6 +7,9 @@ using Microsoft.Build.Framework;
 
 namespace MsBuildPipeLogger
 {
+    /// <summary>
+    /// Base class for transports that write serialized MSBuild events to a pipe stream.
+    /// </summary>
     public abstract class PipeWriter : IPipeWriter
     {
         private readonly BlockingCollection<BuildEventArgs> _queue =
@@ -21,6 +24,11 @@ namespace MsBuildPipeLogger
         // Buffer writes through a memory stream since the args writer does a bunch of small writes
         private readonly MemoryStream _memoryStream = new MemoryStream();
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="PipeWriter"/> class.
+        /// </summary>
+        /// <param name="pipeStream">The connected pipe stream to write to.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
         protected PipeWriter(PipeStream pipeStream)
         {
             _pipeStream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
@@ -29,8 +37,8 @@ namespace MsBuildPipeLogger
 
             Thread writerThread = new Thread(() =>
             {
-                BuildEventArgs eventArgs;
-                while ((eventArgs = TakeEventArgs()) != null)
+                BuildEventArgs? eventArgs;
+                while ((eventArgs = TakeEventArgs()) is not null)
                 {
                     // Reset the memory stream (but reuse the memory)
                     _memoryStream.Seek(0, SeekOrigin.Begin);
@@ -52,7 +60,7 @@ namespace MsBuildPipeLogger
             writerThread.Start();
         }
 
-        private BuildEventArgs TakeEventArgs()
+        private BuildEventArgs? TakeEventArgs()
         {
             if (!_queue.IsCompleted)
             {
@@ -67,6 +75,7 @@ namespace MsBuildPipeLogger
             return null;
         }
 
+        /// <inheritdoc/>
         public void Dispose()
         {
             if (!_queue.IsAddingCompleted)
@@ -87,7 +96,15 @@ namespace MsBuildPipeLogger
             }
         }
 
-        public void Write(BuildEventArgs e) => _queue.Add(e);
+        /// <inheritdoc/>
+        public void Write(BuildEventArgs e)
+        {
+            if (e is null)
+            {
+                throw new ArgumentNullException(nameof(e));
+            }
+            _queue.Add(e);
+        }
 
         private static readonly bool IsWindows = Environment.OSVersion.Platform == PlatformID.Win32NT ||
                                                  Environment.OSVersion.Platform == PlatformID.Win32S ||

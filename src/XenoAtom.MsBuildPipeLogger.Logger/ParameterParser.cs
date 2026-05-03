@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Build.Framework;
@@ -16,6 +16,11 @@ namespace MsBuildPipeLogger
 
         public static IPipeWriter GetPipeFromParameters(string parameters)
         {
+            if (parameters is null)
+            {
+                throw new ArgumentNullException(nameof(parameters));
+            }
+
             KeyValuePair<ParameterType, string>[] segments = ParseParameters(parameters);
 
             if (segments.Any(x => string.IsNullOrWhiteSpace(x.Value)))
@@ -55,6 +60,11 @@ namespace MsBuildPipeLogger
 
         internal static KeyValuePair<ParameterType, string>[] ParseParameters(string parameters)
         {
+            if (parameters is null)
+            {
+                throw new ArgumentNullException(nameof(parameters));
+            }
+
             string[] segments = parameters.Split(';');
             if (segments.Length < 1 || segments.Length > 2)
             {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Reflection;
 using Microsoft.Build.Framework;
@@ -15,6 +15,11 @@ namespace MsBuildPipeLogger
 
         public BuildEventArgsWriterProxy(BinaryWriter writer)
         {
+            if (writer is null)
+            {
+                throw new ArgumentNullException(nameof(writer));
+            }
+
             Type buildEventArgsWriter = GetBuildEventArgsWriterType();
             ConstructorInfo writerConstructor = buildEventArgsWriter.GetConstructor(
                 InstanceMemberFlags,

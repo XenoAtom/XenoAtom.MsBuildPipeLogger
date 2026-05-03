@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Pipes;
@@ -16,7 +16,7 @@ namespace MsBuildPipeLogger
         private readonly BlockingCollection<Buffer> _queue =
             new BlockingCollection<Buffer>(new ConcurrentQueue<Buffer>());
 
-        private Buffer _current;
+        private Buffer? _current;
 
         public void CompleteAdding() => _queue.CompleteAdding();
 
@@ -24,7 +24,12 @@ namespace MsBuildPipeLogger
 
         public bool FillFromStream(Stream stream, CancellationToken cancellationToken)
         {
-            if (!_pool.TryTake(out Buffer buffer))
+            if (stream is null)
+            {
+                throw new ArgumentNullException(nameof(stream));
+            }
+
+            if (!_pool.TryTake(out Buffer? buffer))
             {
                 buffer = new Buffer();
             }
@@ -38,25 +43,36 @@ namespace MsBuildPipeLogger
             return true;
         }
 
-        public override void Write(byte[] buffer, int offset, int count) =>
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (buffer is null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
             _queue.Add(new Buffer(buffer, offset, count));
+        }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
+            if (buffer is null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
             int read = 0;
             while (read < count)
             {
                 // Ensure a buffer is available
-                if (TakeBuffer())
+                if (TryTakeBuffer(out Buffer current))
                 {
                     // Get as much as we can from the current buffer
-                    read += _current.Read(buffer, offset + read, count - read);
-                    if (_current.Count == 0)
+                    read += current.Read(buffer, offset + read, count - read);
+                    if (current.Count == 0)
                     {
                         // Used up this buffer, return to the pool if it's a pool buffer
-                        if (_current.FromPool)
+                        if (current.FromPool)
                         {
-                            _pool.Add(_current);
+                            _pool.Add(current);
                         }
                         _current = null;
                     }
@@ -69,9 +85,9 @@ namespace MsBuildPipeLogger
             return read;
         }
 
-        private bool TakeBuffer()
+        private bool TryTakeBuffer(out Buffer buffer)
         {
-            if (_current == null)
+            if (_current is null)
             {
                 // Take() can throw when marked as complete from another thread
                 // https://docs.microsoft.com/en-us/dotnet/api/system.collections.concurrent.blockingcollection-1.take?view=netcore-3.1
@@ -81,18 +97,23 @@ namespace MsBuildPipeLogger
                 }
                 catch (ObjectDisposedException)
                 {
+                    buffer = null!;
                     return false;
                 }
                 catch (OperationCanceledException)
                 {
+                    buffer = null!;
                     return false;
                 }
                 catch (InvalidOperationException)
                 {
+                    buffer = null!;
                     return false;
                 }
             }
-            return true;
+
+            buffer = _current;
+            return buffer is not null;
         }
 
         private class Buffer
@@ -164,18 +185,18 @@ namespace MsBuildPipeLogger
 
         public override bool CanWrite => false;
 
-        public override long Length => throw new NotImplementedException();
+        public override long Length => throw new NotSupportedException();
 
         public override long Position
         {
-            get => throw new NotImplementedException();
-            set => throw new NotImplementedException();
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
         }
 
-        public override void Flush() => throw new NotImplementedException();
+        public override void Flush() => throw new NotSupportedException();
 
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotImplementedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 
-        public override void SetLength(long value) => throw new NotImplementedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 }

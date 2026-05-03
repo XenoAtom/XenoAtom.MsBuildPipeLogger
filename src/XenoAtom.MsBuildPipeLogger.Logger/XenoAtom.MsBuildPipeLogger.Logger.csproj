@@ -1,11 +1,21 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0</TargetFrameworks>
     <RootNamespace>XenoAtom.MsBuildPipeLogger</RootNamespace>
-    <Description>A logger for MSBuild that sends event data over anonymous or named pipes.</Description>
-    <LangVersion>10.0</LangVersion>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Description>MSBuild logger that streams build event data to XenoAtom.MsBuildPipeLogger.Server over pipes.</Description>
+    <PackageTags>msbuild;logger;binarylog;pipe;named-pipe;build;dotnet;csharp;cross-platform</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../../img/XenoAtom.MsBuildPipeLogger.png" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../../readme.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MinVer">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.Build" PrivateAssets="All" />
     <PackageReference Include="Microsoft.Build.Utilities.Core" PrivateAssets="All" />
     <PackageReference Include="PolySharp">

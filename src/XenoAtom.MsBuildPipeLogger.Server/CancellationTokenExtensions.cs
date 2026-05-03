@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -8,9 +8,18 @@ namespace MsBuildPipeLogger
     {
         public static TResult Try<TResult>(this CancellationToken cancellationToken, Func<TResult> action, Func<TResult> cancelled)
         {
+            if (action is null)
+            {
+                throw new ArgumentNullException(nameof(action));
+            }
+            if (cancelled is null)
+            {
+                throw new ArgumentNullException(nameof(cancelled));
+            }
+
             if (cancellationToken.IsCancellationRequested)
             {
-                return cancelled == null ? default(TResult) : cancelled();
+                return cancelled();
             }
             try
             {
@@ -19,22 +28,22 @@ namespace MsBuildPipeLogger
             catch (TaskCanceledException)
             {
                 // Thrown if the task itself was canceled from inside the read method
-                return cancelled == null ? default(TResult) : cancelled();
+                return cancelled();
             }
             catch (OperationCanceledException)
             {
                 // Thrown if the operation was canceled (I.e., the task didn't deal with cancellation)
-                return cancelled == null ? default(TResult) : cancelled();
+                return cancelled();
             }
             catch (AggregateException ex)
             {
                 // Sometimes the cancellation exceptions are thrown in aggregate
-                if (!(ex.InnerException is TaskCanceledException)
-                    && !(ex.InnerException is OperationCanceledException))
+                if (ex.InnerException is not TaskCanceledException
+                    && ex.InnerException is not OperationCanceledException)
                 {
                     throw;
                 }
-                return cancelled == null ? default(TResult) : cancelled();
+                return cancelled();
             }
         }
     }

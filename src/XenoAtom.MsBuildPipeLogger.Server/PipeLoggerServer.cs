@@ -1,9 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Reflection;
-using System.Text;
 using System.Threading;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
@@ -14,6 +12,7 @@ namespace MsBuildPipeLogger
     /// Receives MSBuild logging events over a pipe. This is the base class for <see cref="AnonymousPipeLoggerServer"/>
     /// and <see cref="NamedPipeLoggerServer"/>.
     /// </summary>
+    /// <typeparam name="TPipeStream">The concrete pipe stream type.</typeparam>
     public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipeLoggerServer
         where TPipeStream : PipeStream
     {
@@ -22,14 +21,21 @@ namespace MsBuildPipeLogger
 
         internal PipeBuffer Buffer { get; } = new PipeBuffer();
 
+        /// <summary>
+        /// Gets the pipe stream read by this server.
+        /// </summary>
         protected TPipeStream PipeStream { get; }
 
+        /// <summary>
+        /// Gets the token used to cancel read operations.
+        /// </summary>
         protected CancellationToken CancellationToken { get; }
 
         /// <summary>
         /// Creates a server that receives MSBuild events over a specified pipe.
         /// </summary>
         /// <param name="pipeStream">The pipe to receive events from.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
         protected PipeLoggerServer(TPipeStream pipeStream)
             : this(pipeStream, CancellationToken.None)
         {
@@ -40,9 +46,10 @@ namespace MsBuildPipeLogger
         /// </summary>
         /// <param name="pipeStream">The pipe to receive events from.</param>
         /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
         protected PipeLoggerServer(TPipeStream pipeStream, CancellationToken cancellationToken)
         {
-            PipeStream = pipeStream;
+            PipeStream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
             _binaryReader = new BinaryReader(Buffer);
             _buildEventArgsReader = new BuildEventArgsReader(_binaryReader, GetBinaryLoggerFileFormatVersion());
             CancellationToken = cancellationToken;
@@ -77,30 +84,30 @@ namespace MsBuildPipeLogger
             readerThread.Start();
         }
 
+        /// <summary>
+        /// Connects the server-side pipe stream to a client.
+        /// </summary>
         protected abstract void Connect();
 
         private static int GetBinaryLoggerFileFormatVersion()
         {
             FieldInfo fileFormatVersionField = typeof(BinaryLogger).GetField(
                 "FileFormatVersion",
-                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-            if (fileFormatVersionField == null)
-            {
-                throw new MissingFieldException(typeof(BinaryLogger).FullName, "FileFormatVersion");
-            }
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(BinaryLogger).FullName ?? typeof(BinaryLogger).Name, "FileFormatVersion");
 
-            object fileFormatVersion = fileFormatVersionField.GetValue(null);
-            if (!(fileFormatVersion is int))
+            object? fileFormatVersion = fileFormatVersionField.GetValue(null);
+            if (fileFormatVersion is not int version)
             {
                 throw new InvalidOperationException(
                     $"Field '{typeof(BinaryLogger).FullName}.FileFormatVersion' must be an integer.");
             }
 
-            return (int)fileFormatVersion;
+            return version;
         }
 
         /// <inheritdoc/>
-        public BuildEventArgs Read()
+        public BuildEventArgs? Read()
         {
             if (Buffer.IsCompleted)
             {
@@ -109,8 +116,8 @@ namespace MsBuildPipeLogger
 
             try
             {
-                BuildEventArgs args = _buildEventArgsReader.Read();
-                if (args != null)
+                BuildEventArgs? args = _buildEventArgsReader.Read();
+                if (args is not null)
                 {
                     Dispatch(args);
                     return args;
@@ -127,8 +134,8 @@ namespace MsBuildPipeLogger
         /// <inheritdoc/>
         public void ReadAll()
         {
-            BuildEventArgs args = Read();
-            while (args != null)
+            BuildEventArgs? args = Read();
+            while (args is not null)
             {
                 if (args is BuildFinishedEventArgs)
                 {

@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.IO.Pipes;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace MsBuildPipeLogger
 {
@@ -12,12 +11,17 @@ namespace MsBuildPipeLogger
     {
         private readonly InterlockedBool _connected = new InterlockedBool(false);
 
+        /// <summary>
+        /// Gets the named pipe name.
+        /// </summary>
         public string PipeName { get; }
 
         /// <summary>
         /// Creates a named pipe server for receiving MSBuild logging events.
         /// </summary>
         /// <param name="pipeName">The name of the pipe to create.</param>
+        /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or whitespace.</exception>
+        /// <exception cref="ArgumentNullException"><paramref name="pipeName"/> is <see langword="null"/>.</exception>
         public NamedPipeLoggerServer(string pipeName)
             : this(pipeName, CancellationToken.None)
         {
@@ -28,17 +32,34 @@ namespace MsBuildPipeLogger
         /// </summary>
         /// <param name="pipeName">The name of the pipe to create.</param>
         /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
+        /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or whitespace.</exception>
+        /// <exception cref="ArgumentNullException"><paramref name="pipeName"/> is <see langword="null"/>.</exception>
         public NamedPipeLoggerServer(string pipeName, CancellationToken cancellationToken)
-            : base(new NamedPipeServerStream(pipeName, PipeDirection.In), cancellationToken)
+            : base(CreatePipe(pipeName), cancellationToken)
         {
             PipeName = pipeName;
             CancellationToken.Register(CancelConnectionWait);
         }
 
+        /// <inheritdoc/>
         protected override void Connect()
         {
             PipeStream.WaitForConnection();
             _connected.Set();
+        }
+
+        private static NamedPipeServerStream CreatePipe(string pipeName)
+        {
+            if (pipeName is null)
+            {
+                throw new ArgumentNullException(nameof(pipeName));
+            }
+            if (string.IsNullOrWhiteSpace(pipeName))
+            {
+                throw new ArgumentException("The pipe name cannot be empty or whitespace.", nameof(pipeName));
+            }
+
+            return new NamedPipeServerStream(pipeName, PipeDirection.In);
         }
 
         private void CancelConnectionWait()

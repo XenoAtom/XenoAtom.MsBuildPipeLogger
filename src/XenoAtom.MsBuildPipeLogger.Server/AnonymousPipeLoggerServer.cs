@@ -1,8 +1,5 @@
-using System;
-using System.IO;
 using System.IO.Pipes;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace MsBuildPipeLogger
 {
@@ -11,7 +8,7 @@ namespace MsBuildPipeLogger
     /// </summary>
     public class AnonymousPipeLoggerServer : PipeLoggerServer<AnonymousPipeServerStream>
     {
-        private string _clientHandle;
+        private string? _clientHandle;
 
         /// <summary>
         /// Creates an anonymous pipe server for receiving MSBuild logging events.
@@ -36,6 +33,7 @@ namespace MsBuildPipeLogger
         /// <returns>The client handle as a string.</returns>
         public string GetClientHandle() => _clientHandle ?? (_clientHandle = PipeStream.GetClientHandleAsString());
 
+        /// <inheritdoc/>
         protected override void Connect()
         {
             // Wait for the first write, there's a chicken-and-egg problem with the pipe handle
@@ -45,7 +43,7 @@ namespace MsBuildPipeLogger
 
             // Dispose the client handle if we asked for one
             // If we don't do this we won't get notified when the stream closes, see https://stackoverflow.com/q/39682602/807064
-            if (_clientHandle != null)
+            if (_clientHandle is not null)
             {
                 PipeStream.DisposeLocalCopyOfClientHandle();
                 _clientHandle = null;
