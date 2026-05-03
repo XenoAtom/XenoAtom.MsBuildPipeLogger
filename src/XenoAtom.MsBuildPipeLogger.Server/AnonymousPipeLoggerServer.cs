@@ -11,6 +11,9 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </summary>
 public class AnonymousPipeLoggerServer : PipeLoggerServer<AnonymousPipeServerStream>
 {
+    private readonly object _clientHandleLock = new();
+    private readonly CancellationTokenRegistration _clientHandleCancellationRegistration;
+
     private string? _clientHandle;
 
     /// <summary>
@@ -28,16 +31,32 @@ public class AnonymousPipeLoggerServer : PipeLoggerServer<AnonymousPipeServerStr
     public AnonymousPipeLoggerServer(CancellationToken cancellationToken)
         : base(new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable), cancellationToken, false)
     {
+        if (cancellationToken.CanBeCanceled)
+        {
+            _clientHandleCancellationRegistration = cancellationToken.Register(DisposeLocalClientHandle);
+        }
+
         StartReading();
     }
 
     /// <summary>
-    /// Gets the client handle as a string. The local copy of the handle will be automatically disposed on the first call to <c>Read</c>.
+    /// Gets the client handle as a string. The local copy of the handle will be automatically disposed on the first read, cancellation, or disposal.
     /// </summary>
     /// <returns>The client handle as a string.</returns>
     public string GetClientHandle()
     {
-        return _clientHandle ?? (_clientHandle = PipeStream.GetClientHandleAsString());
+        lock (_clientHandleLock)
+        {
+            return _clientHandle ?? (_clientHandle = PipeStream.GetClientHandleAsString());
+        }
+    }
+
+    /// <inheritdoc/>
+    public override void Dispose()
+    {
+        _clientHandleCancellationRegistration.Dispose();
+        DisposeLocalClientHandle();
+        base.Dispose();
     }
 
     /// <inheritdoc/>
@@ -45,14 +64,42 @@ public class AnonymousPipeLoggerServer : PipeLoggerServer<AnonymousPipeServerStr
     {
         // Wait for the first write, there's a chicken-and-egg problem with the pipe handle.
         // I can only dispose the local handle after the first pipe read, which blocks.
-        // But I can only catch the pipe disposal from cancellation after the handle has been disposed.
-        Buffer.FillFromStream(PipeStream, CancellationToken);
-
-        // Dispose the client handle if we asked for one.
-        // If we don't do this we won't get notified when the stream closes, see https://stackoverflow.com/q/39682602/807064.
-        if (_clientHandle is not null)
+        // Cancellation and disposal also close the local client handle to unblock this read when no client connects.
+        try
         {
-            PipeStream.DisposeLocalCopyOfClientHandle();
+            Buffer.FillFromStream(PipeStream, CancellationToken);
+        }
+        finally
+        {
+            DisposeLocalClientHandle();
+        }
+    }
+
+    private void DisposeLocalClientHandle()
+    {
+        lock (_clientHandleLock)
+        {
+            // Dispose the client handle if we asked for one.
+            // If we don't do this we won't get notified when the stream closes, see https://stackoverflow.com/q/39682602/807064.
+            if (_clientHandle is null)
+            {
+                return;
+            }
+
+            try
+            {
+                PipeStream.DisposeLocalCopyOfClientHandle();
+            }
+            catch (IOException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
             _clientHandle = null;
         }
     }

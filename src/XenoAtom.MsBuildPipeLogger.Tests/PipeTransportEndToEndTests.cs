@@ -81,6 +81,34 @@ public class PipeTransportEndToEndTests
     [TestMethod]
     [DataRow(0)]
     [DataRow(1)]
+    [DataRow(10000)]
+    public async Task PipeLogger_ForwardsEventsToNamedPipeServer(int messageCount)
+    {
+        var pipeName = CreatePipeName();
+        using var server = new NamedPipeLoggerServer(pipeName);
+        var events = SubscribeAnyEvents(server);
+        var eventSource = new TestEventSource();
+        var logger = new PipeLogger { Parameters = $"name={pipeName}" };
+        var readTask = Task.Run(server.ReadAll);
+
+        try
+        {
+            logger.Initialize(eventSource);
+            RaiseBuildEvents(eventSource, messageCount, includeBuildFinished: true);
+            logger.Shutdown();
+
+            await WaitForReadAllAsync(readTask, server).ConfigureAwait(false);
+            BuildEventAssertions.AssertEvents(events, messageCount, includeBuildFinished: true);
+        }
+        finally
+        {
+            logger.Shutdown();
+        }
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(1)]
     [DataRow(100000)]
     public async Task AnonymousPipe_TransportsEventsFromChildProcess(int messageCount)
     {
@@ -116,6 +144,20 @@ public class PipeTransportEndToEndTests
         var events = new List<BuildEventArgs>();
         server.AnyEventRaised += (_, e) => events.Add(e);
         return events;
+    }
+
+    private static void RaiseBuildEvents(TestEventSource eventSource, int messageCount, bool includeBuildFinished)
+    {
+        eventSource.RaiseAnyEvent(new BuildStartedEventArgs("Testing", "help"));
+        for (var index = 0; index < messageCount; index++)
+        {
+            eventSource.RaiseAnyEvent(new BuildMessageEventArgs($"Testing {index}", "help", "sender", MessageImportance.Normal));
+        }
+
+        if (includeBuildFinished)
+        {
+            eventSource.RaiseAnyEvent(new BuildFinishedEventArgs("Finished", "help", true));
+        }
     }
 
     private static async Task WaitForReadAllAsync(Task readTask, IPipeLoggerServer server)
@@ -204,5 +246,41 @@ public class PipeTransportEndToEndTests
     private void WriteLine(string message)
     {
         TestContext?.WriteLine(message);
+    }
+
+    private sealed class TestEventSource : IEventSource
+    {
+        public event BuildMessageEventHandler? MessageRaised { add { } remove { } }
+
+        public event BuildErrorEventHandler? ErrorRaised { add { } remove { } }
+
+        public event BuildWarningEventHandler? WarningRaised { add { } remove { } }
+
+        public event BuildStartedEventHandler? BuildStarted { add { } remove { } }
+
+        public event BuildFinishedEventHandler? BuildFinished { add { } remove { } }
+
+        public event ProjectStartedEventHandler? ProjectStarted { add { } remove { } }
+
+        public event ProjectFinishedEventHandler? ProjectFinished { add { } remove { } }
+
+        public event TargetStartedEventHandler? TargetStarted { add { } remove { } }
+
+        public event TargetFinishedEventHandler? TargetFinished { add { } remove { } }
+
+        public event TaskStartedEventHandler? TaskStarted { add { } remove { } }
+
+        public event TaskFinishedEventHandler? TaskFinished { add { } remove { } }
+
+        public event CustomBuildEventHandler? CustomEventRaised { add { } remove { } }
+
+        public event BuildStatusEventHandler? StatusEventRaised { add { } remove { } }
+
+        public event AnyEventHandler? AnyEventRaised;
+
+        public void RaiseAnyEvent(BuildEventArgs eventArgs)
+        {
+            AnyEventRaised?.Invoke(this, eventArgs);
+        }
     }
 }

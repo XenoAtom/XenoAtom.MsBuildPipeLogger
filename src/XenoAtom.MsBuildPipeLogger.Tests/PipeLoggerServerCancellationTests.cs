@@ -31,6 +31,20 @@ public class PipeLoggerServerCancellationTests
     }
 
     [TestMethod]
+    public async Task AnonymousPipe_ReadReturnsNullWhenCanceledAfterClientHandleIsCreated()
+    {
+        using var tokenSource = new CancellationTokenSource();
+        using var server = new AnonymousPipeLoggerServer(tokenSource.Token);
+        _ = server.GetClientHandle();
+        var readTask = Task.Run(server.Read);
+
+        tokenSource.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        var buildEvent = await readTask.WaitAsync(TestTimeout).ConfigureAwait(false);
+        Assert.IsNull(buildEvent);
+    }
+
+    [TestMethod]
     public async Task NamedPipe_DisposeUnblocksPendingRead()
     {
         using var server = new NamedPipeLoggerServer(CreatePipeName());
@@ -47,6 +61,20 @@ public class PipeLoggerServerCancellationTests
     public async Task AnonymousPipe_DisposeUnblocksPendingRead()
     {
         using var server = new AnonymousPipeLoggerServer();
+        var readTask = Task.Run(server.Read);
+
+        await Task.Delay(100).ConfigureAwait(false);
+        server.Dispose();
+
+        var buildEvent = await readTask.WaitAsync(TestTimeout).ConfigureAwait(false);
+        Assert.IsNull(buildEvent);
+    }
+
+    [TestMethod]
+    public async Task AnonymousPipe_DisposeUnblocksPendingReadAfterClientHandleIsCreated()
+    {
+        using var server = new AnonymousPipeLoggerServer();
+        _ = server.GetClientHandle();
         var readTask = Task.Run(server.Read);
 
         await Task.Delay(100).ConfigureAwait(false);

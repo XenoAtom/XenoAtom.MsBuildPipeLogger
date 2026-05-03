@@ -90,7 +90,7 @@ public abstract class PipeWriter : IPipeWriter
             throw new ArgumentNullException(nameof(e));
         }
 
-        if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _stopped) != 0 || _queue.IsAddingCompleted)
+        if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _stopped) != 0)
         {
             return;
         }
@@ -140,6 +140,10 @@ public abstract class PipeWriter : IPipeWriter
         {
             // The server closed the transport.
         }
+        catch (Exception)
+        {
+            // A logger transport failure must not tear down the build process.
+        }
         finally
         {
             Volatile.Write(ref _stopped, 1);
@@ -170,6 +174,9 @@ public abstract class PipeWriter : IPipeWriter
         {
         }
         catch (PlatformNotSupportedException)
+        {
+        }
+        catch (InvalidOperationException)
         {
         }
     }

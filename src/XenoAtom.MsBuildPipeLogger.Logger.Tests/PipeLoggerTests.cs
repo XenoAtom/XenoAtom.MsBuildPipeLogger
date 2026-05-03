@@ -41,6 +41,19 @@ public class PipeLoggerTests
     }
 
     [TestMethod]
+    public void Shutdown_CanBeCalledBeforeInitializeAndMoreThanOnce()
+    {
+        var logger = new TestPipeLogger();
+
+        logger.Shutdown();
+        logger.Initialize(new TestEventSource());
+        logger.Shutdown();
+        logger.Shutdown();
+
+        Assert.IsTrue(logger.Writer.IsDisposed);
+    }
+
+    [TestMethod]
     public void Initialize_SetsMsBuildEnvironmentVariables()
     {
         var oldTargetOutputLogging = Environment.GetEnvironmentVariable("MSBUILDTARGETOUTPUTLOGGING");
