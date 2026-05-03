@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.IO.Pipes;
+using System.Net.Sockets;
 
 namespace XenoAtom.MsBuildPipeLogger;
 
@@ -96,6 +97,9 @@ public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
         {
         }
         catch (ObjectDisposedException)
+        {
+        }
+        catch (SocketException)
         {
         }
         catch (TimeoutException)

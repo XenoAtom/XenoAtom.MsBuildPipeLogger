@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.IO.Pipes;
+using System.Net.Sockets;
 using System.Reflection;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
@@ -129,6 +130,10 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         catch (OperationCanceledException)
         {
             // The operation was canceled.
+        }
+        catch (SocketException) when (CancellationToken.IsCancellationRequested || Volatile.Read(ref _disposed) != 0)
+        {
+            // Unix named pipes can surface cancellation/disposal of WaitForConnection as a socket error.
         }
         catch (InvalidOperationException)
         {
