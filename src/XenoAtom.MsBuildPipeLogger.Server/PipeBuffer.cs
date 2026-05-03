@@ -1,287 +1,298 @@
-using System;
+// Copyright (c) Alexandre Mutel. All rights reserved.
+// Licensed under the BSD-Clause 2 license.
+// See license.txt file in the project root for full license information.
+
 using System.Collections.Concurrent;
-using System.IO;
 using System.IO.Pipes;
-using System.Threading;
-using System.Threading.Tasks;
 
-namespace MsBuildPipeLogger
+namespace XenoAtom.MsBuildPipeLogger;
+
+internal class PipeBuffer : Stream
 {
-    internal class PipeBuffer : Stream
+    private const int BufferSize = 8192;
+
+    private readonly ConcurrentBag<Buffer> _pool = new();
+
+    private readonly BlockingCollection<Buffer> _queue = new(new ConcurrentQueue<Buffer>());
+
+    private Buffer? _current;
+
+    public void CompleteAdding()
     {
-        private const int BufferSize = 8192;
-
-        private readonly ConcurrentBag<Buffer> _pool = new ConcurrentBag<Buffer>();
-
-        private readonly BlockingCollection<Buffer> _queue =
-            new BlockingCollection<Buffer>(new ConcurrentQueue<Buffer>());
-
-        private Buffer? _current;
-
-        public void CompleteAdding()
+        try
         {
-            try
+            if (!_queue.IsAddingCompleted)
             {
-                if (!_queue.IsAddingCompleted)
-                {
-                    _queue.CompleteAdding();
-                }
-            }
-            catch (ObjectDisposedException)
-            {
+                _queue.CompleteAdding();
             }
         }
-
-        public bool IsCompleted => _queue.IsCompleted;
-
-        public bool FillFromStream(Stream stream, CancellationToken cancellationToken)
+        catch (ObjectDisposedException)
         {
-            if (stream is null)
-            {
-                throw new ArgumentNullException(nameof(stream));
-            }
+        }
+    }
 
-            if (!_pool.TryTake(out Buffer? buffer))
-            {
-                buffer = new Buffer();
-            }
+    public bool IsCompleted => _queue.IsCompleted;
 
-            if (buffer.FillFromStream(stream, cancellationToken) == 0)
-            {
-                // Didn't write anything, return it to the pool
-                _pool.Add(buffer);
-                return false;
-            }
+    public bool FillFromStream(Stream stream, CancellationToken cancellationToken)
+    {
+        if (stream is null)
+        {
+            throw new ArgumentNullException(nameof(stream));
+        }
 
-            try
-            {
-                _queue.Add(buffer, cancellationToken);
-                return true;
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-            catch (InvalidOperationException)
-            {
-            }
-            catch (OperationCanceledException)
-            {
-            }
+        if (!_pool.TryTake(out var buffer))
+        {
+            buffer = new Buffer();
+        }
 
-            if (buffer.FromPool)
-            {
-                _pool.Add(buffer);
-            }
+        if (buffer.FillFromStream(stream, cancellationToken) == 0)
+        {
+            // Didn't write anything, return it to the pool
+            _pool.Add(buffer);
             return false;
         }
 
-        public bool TryWriteEndOfFile()
+        try
         {
-            try
-            {
-                Write(new byte[1], 0, 1);
-                return true;
-            }
-            catch (ObjectDisposedException)
-            {
-                return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
+            _queue.Add(buffer, cancellationToken);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (OperationCanceledException)
+        {
         }
 
-        public override void Write(byte[] buffer, int offset, int count)
+        if (buffer.FromPool)
         {
-            ValidateReadWriteArguments(buffer, offset, count);
-            try
-            {
-                _queue.Add(new Buffer(buffer, offset, count));
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-            catch (InvalidOperationException)
-            {
-            }
+            _pool.Add(buffer);
         }
 
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            ValidateReadWriteArguments(buffer, offset, count);
+        return false;
+    }
 
-            int read = 0;
-            while (read < count)
+    public bool TryWriteEndOfFile()
+    {
+        try
+        {
+            Write(new byte[1], 0, 1);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        ValidateReadWriteArguments(buffer, offset, count);
+        try
+        {
+            _queue.Add(new Buffer(buffer, offset, count));
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        ValidateReadWriteArguments(buffer, offset, count);
+
+        var read = 0;
+        while (read < count)
+        {
+            // Ensure a buffer is available
+            var current = TakeBuffer();
+            if (current is not null)
             {
-                // Ensure a buffer is available
-                Buffer? current = TakeBuffer();
-                if (current is not null)
+                // Get as much as we can from the current buffer
+                read += current.Read(buffer, offset + read, count - read);
+                if (current.Count == 0)
                 {
-                    // Get as much as we can from the current buffer
-                    read += current.Read(buffer, offset + read, count - read);
-                    if (current.Count == 0)
+                    // Used up this buffer, return to the pool if it's a pool buffer
+                    if (current.FromPool)
                     {
-                        // Used up this buffer, return to the pool if it's a pool buffer
-                        if (current.FromPool)
-                        {
-                            _pool.Add(current);
-                        }
-                        _current = null;
+                        _pool.Add(current);
                     }
+
+                    _current = null;
                 }
-                else
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return read;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            CompleteAdding();
+            _queue.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    private static void ValidateReadWriteArguments(byte[] buffer, int offset, int count)
+    {
+        if (buffer is null)
+        {
+            throw new ArgumentNullException(nameof(buffer));
+        }
+
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        }
+
+        if (count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        if (buffer.Length - offset < count)
+        {
+            throw new ArgumentException("The offset and count exceed the buffer bounds.", nameof(count));
+        }
+    }
+
+    private Buffer? TakeBuffer()
+    {
+        if (_current is not null)
+        {
+            return _current;
+        }
+
+        // Take() can throw when marked as complete from another thread
+        // https://docs.microsoft.com/en-us/dotnet/api/system.collections.concurrent.blockingcollection-1.take?view=netcore-3.1
+        try
+        {
+            _current = _queue.Take();
+            return _current;
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private class Buffer
+    {
+        private readonly byte[] _buffer;
+
+        private int _offset;
+
+        public int Count { get; private set; }
+
+        public bool FromPool { get; }
+
+        public Buffer()
+        {
+            _buffer = new byte[BufferSize];
+            FromPool = true;
+        }
+
+        public Buffer(byte[] buffer, int offset, int count)
+        {
+            _buffer = new byte[count];
+            System.Buffer.BlockCopy(buffer, offset, _buffer, 0, count);
+            Count = count;
+        }
+
+        public int FillFromStream(Stream stream, CancellationToken cancellationToken)
+        {
+            _offset = 0;
+            if (stream is AnonymousPipeServerStream || stream is AnonymousPipeClientStream)
+            {
+                // We can't use ReadAsync with Anonymous PipeStream
+                // https://github.com/dotnet/runtime/issues/23638
+                // https://docs.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
+                // Asynchronous (overlapped) read and write operations are not supported by anonymous pipes
+                Count = cancellationToken.IsCancellationRequested ? 0 : stream.Read(_buffer, _offset, BufferSize);
+            }
+            else
+            {
+                try
                 {
-                    break;
+                    var readTask = stream.ReadAsync(_buffer, _offset, BufferSize, cancellationToken);
+                    Count = readTask.GetAwaiter().GetResult();
                 }
-            }
-            return read;
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                CompleteAdding();
-                _queue.Dispose();
-            }
-
-            base.Dispose(disposing);
-        }
-
-        private static void ValidateReadWriteArguments(byte[] buffer, int offset, int count)
-        {
-            if (buffer is null)
-            {
-                throw new ArgumentNullException(nameof(buffer));
-            }
-            if (offset < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(offset));
-            }
-            if (count < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(count));
-            }
-            if (buffer.Length - offset < count)
-            {
-                throw new ArgumentException("The offset and count exceed the buffer bounds.", nameof(count));
-            }
-        }
-
-        private Buffer? TakeBuffer()
-        {
-            if (_current is not null)
-            {
-                return _current;
-            }
-
-            // Take() can throw when marked as complete from another thread
-            // https://docs.microsoft.com/en-us/dotnet/api/system.collections.concurrent.blockingcollection-1.take?view=netcore-3.1
-            try
-            {
-                _current = _queue.Take();
-                return _current;
-            }
-            catch (ObjectDisposedException)
-            {
-                return null;
-            }
-            catch (OperationCanceledException)
-            {
-                return null;
-            }
-            catch (InvalidOperationException)
-            {
-                return null;
-            }
-        }
-
-        private class Buffer
-        {
-            private readonly byte[] _buffer;
-
-            private int _offset;
-
-            public int Count { get; private set; }
-
-            public bool FromPool { get; }
-
-            public Buffer()
-            {
-                _buffer = new byte[BufferSize];
-                FromPool = true;
-            }
-
-            public Buffer(byte[] buffer, int offset, int count)
-            {
-                _buffer = new byte[count];
-                System.Buffer.BlockCopy(buffer, offset, _buffer, 0, count);
-                Count = count;
-            }
-
-            public int FillFromStream(Stream stream, CancellationToken cancellationToken)
-            {
-                _offset = 0;
-                if (stream is AnonymousPipeServerStream || stream is AnonymousPipeClientStream)
+                catch (OperationCanceledException)
                 {
-                    // We can't use ReadAsync with Anonymous PipeStream
-                    // https://github.com/dotnet/runtime/issues/23638
-                    // https://docs.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
-                    // Asynchronous (overlapped) read and write operations are not supported by anonymous pipes
-                    Count = cancellationToken.IsCancellationRequested ? 0 : stream.Read(_buffer, _offset, BufferSize);
+                    Count = 0;
                 }
-                else
+                catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
                 {
-                    try
-                    {
-                        Task<int> readTask = stream.ReadAsync(_buffer, _offset, BufferSize, cancellationToken);
-                        Count = readTask.GetAwaiter().GetResult();
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        Count = 0;
-                    }
-                    catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        Count = 0;
-                    }
+                    Count = 0;
                 }
-                return Count;
             }
 
-            public int Read(byte[] buffer, int offset, int count)
-            {
-                int available = count > Count ? Count : count;
-                Array.Copy(_buffer, _offset, buffer, offset, available);
-                _offset += available;
-                Count -= available;
-                return available;
-            }
+            return Count;
         }
 
-        // Not implemented
-
-        public override bool CanRead => true;
-
-        public override bool CanSeek => false;
-
-        public override bool CanWrite => true;
-
-        public override long Length => throw new NotSupportedException();
-
-        public override long Position
+        public int Read(byte[] buffer, int offset, int count)
         {
-            get => throw new NotSupportedException();
-            set => throw new NotSupportedException();
+            var available = count > Count ? Count : count;
+            Array.Copy(_buffer, _offset, buffer, offset, available);
+            _offset += available;
+            Count -= available;
+            return available;
         }
+    }
 
-        public override void Flush()
-        {
-        }
+    // Not implemented
 
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override bool CanRead => true;
 
-        public override void SetLength(long value) => throw new NotSupportedException();
+    public override bool CanSeek => false;
+
+    public override bool CanWrite => true;
+
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush()
+    {
+    }
+
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        throw new NotSupportedException();
+    }
+
+    public override void SetLength(long value)
+    {
+        throw new NotSupportedException();
     }
 }

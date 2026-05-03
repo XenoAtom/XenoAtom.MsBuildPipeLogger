@@ -1,74 +1,79 @@
-using System;
+// Copyright (c) Alexandre Mutel. All rights reserved.
+// Licensed under the BSD-Clause 2 license.
+// See license.txt file in the project root for full license information.
+
 using System.IO.Pipes;
 
-namespace MsBuildPipeLogger
+namespace XenoAtom.MsBuildPipeLogger;
+
+/// <summary>
+/// Writes MSBuild events to a named pipe.
+/// </summary>
+public class NamedPipeWriter : PipeWriter
 {
     /// <summary>
-    /// Writes MSBuild events to a named pipe.
+    /// Gets the named pipe server name.
     /// </summary>
-    public class NamedPipeWriter : PipeWriter
+    public string ServerName { get; }
+
+    /// <summary>
+    /// Gets the named pipe name.
+    /// </summary>
+    public string PipeName { get; }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="NamedPipeWriter"/> class for a local named pipe.
+    /// </summary>
+    /// <param name="pipeName">The named pipe name.</param>
+    /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or whitespace.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="pipeName"/> is <see langword="null"/>.</exception>
+    public NamedPipeWriter(string pipeName)
+        : this(".", pipeName)
     {
-        /// <summary>
-        /// Gets the named pipe server name.
-        /// </summary>
-        public string ServerName { get; }
+    }
 
-        /// <summary>
-        /// Gets the named pipe name.
-        /// </summary>
-        public string PipeName { get; }
+    /// <summary>
+    /// Initializes a new instance of the <see cref="NamedPipeWriter"/> class.
+    /// </summary>
+    /// <param name="serverName">The named pipe server name.</param>
+    /// <param name="pipeName">The named pipe name.</param>
+    /// <exception cref="ArgumentException"><paramref name="serverName"/> or <paramref name="pipeName"/> is empty or whitespace.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="serverName"/> or <paramref name="pipeName"/> is <see langword="null"/>.</exception>
+    public NamedPipeWriter(string serverName, string pipeName)
+        : base(InitializePipe(serverName, pipeName))
+    {
+        ServerName = serverName;
+        PipeName = pipeName;
+    }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="NamedPipeWriter"/> class for a local named pipe.
-        /// </summary>
-        /// <param name="pipeName">The named pipe name.</param>
-        /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or whitespace.</exception>
-        /// <exception cref="ArgumentNullException"><paramref name="pipeName"/> is <see langword="null"/>.</exception>
-        public NamedPipeWriter(string pipeName)
-            : this(".", pipeName)
+    private static PipeStream InitializePipe(string serverName, string pipeName)
+    {
+        ValidatePipeEndpoint(serverName, pipeName);
+        var pipeStream = new NamedPipeClientStream(serverName, pipeName, PipeDirection.Out);
+        pipeStream.Connect();
+        return pipeStream;
+    }
+
+    private static void ValidatePipeEndpoint(string serverName, string pipeName)
+    {
+        if (serverName is null)
         {
+            throw new ArgumentNullException(nameof(serverName));
         }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="NamedPipeWriter"/> class.
-        /// </summary>
-        /// <param name="serverName">The named pipe server name.</param>
-        /// <param name="pipeName">The named pipe name.</param>
-        /// <exception cref="ArgumentException"><paramref name="serverName"/> or <paramref name="pipeName"/> is empty or whitespace.</exception>
-        /// <exception cref="ArgumentNullException"><paramref name="serverName"/> or <paramref name="pipeName"/> is <see langword="null"/>.</exception>
-        public NamedPipeWriter(string serverName, string pipeName)
-            : base(InitializePipe(serverName, pipeName))
+        if (pipeName is null)
         {
-            ServerName = serverName;
-            PipeName = pipeName;
+            throw new ArgumentNullException(nameof(pipeName));
         }
 
-        private static PipeStream InitializePipe(string serverName, string pipeName)
+        if (string.IsNullOrWhiteSpace(serverName))
         {
-            ValidatePipeEndpoint(serverName, pipeName);
-            NamedPipeClientStream pipeStream = new NamedPipeClientStream(serverName, pipeName, PipeDirection.Out);
-            pipeStream.Connect();
-            return pipeStream;
+            throw new ArgumentException("The pipe server name cannot be empty or whitespace.", nameof(serverName));
         }
 
-        private static void ValidatePipeEndpoint(string serverName, string pipeName)
+        if (string.IsNullOrWhiteSpace(pipeName))
         {
-            if (serverName is null)
-            {
-                throw new ArgumentNullException(nameof(serverName));
-            }
-            if (pipeName is null)
-            {
-                throw new ArgumentNullException(nameof(pipeName));
-            }
-            if (string.IsNullOrWhiteSpace(serverName))
-            {
-                throw new ArgumentException("The pipe server name cannot be empty or whitespace.", nameof(serverName));
-            }
-            if (string.IsNullOrWhiteSpace(pipeName))
-            {
-                throw new ArgumentException("The pipe name cannot be empty or whitespace.", nameof(pipeName));
-            }
+            throw new ArgumentException("The pipe name cannot be empty or whitespace.", nameof(pipeName));
         }
     }
 }

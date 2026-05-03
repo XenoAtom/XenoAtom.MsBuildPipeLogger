@@ -1,221 +1,222 @@
-using System;
-using System.IO;
+// Copyright (c) Alexandre Mutel. All rights reserved.
+// Licensed under the BSD-Clause 2 license.
+// See license.txt file in the project root for full license information.
+
 using System.IO.Pipes;
 using System.Reflection;
-using System.Threading;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
 
-namespace MsBuildPipeLogger
+namespace XenoAtom.MsBuildPipeLogger;
+
+/// <summary>
+/// Receives MSBuild logging events over a pipe. This is the base class for <see cref="AnonymousPipeLoggerServer"/>
+/// and <see cref="NamedPipeLoggerServer"/>.
+/// </summary>
+/// <typeparam name="TPipeStream">The concrete pipe stream type.</typeparam>
+public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipeLoggerServer
+    where TPipeStream : PipeStream
 {
+    private static readonly TimeSpan ReaderShutdownTimeout = TimeSpan.FromSeconds(5);
+
+    private readonly BinaryReader _binaryReader;
+    private readonly BuildEventArgsReader _buildEventArgsReader;
+    private readonly Thread _readerThread;
+    private int _disposed;
+    private int _started;
+
+    internal PipeBuffer Buffer { get; } = new();
+
     /// <summary>
-    /// Receives MSBuild logging events over a pipe. This is the base class for <see cref="AnonymousPipeLoggerServer"/>
-    /// and <see cref="NamedPipeLoggerServer"/>.
+    /// Gets the pipe stream read by this server.
     /// </summary>
-    /// <typeparam name="TPipeStream">The concrete pipe stream type.</typeparam>
-    public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipeLoggerServer
-        where TPipeStream : PipeStream
+    protected TPipeStream PipeStream { get; }
+
+    /// <summary>
+    /// Gets the token used to cancel read operations.
+    /// </summary>
+    protected CancellationToken CancellationToken { get; }
+
+    /// <summary>
+    /// Creates a server that receives MSBuild events over a specified pipe.
+    /// </summary>
+    /// <param name="pipeStream">The pipe to receive events from.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
+    protected PipeLoggerServer(TPipeStream pipeStream)
+        : this(pipeStream, CancellationToken.None)
     {
-        private static readonly TimeSpan ReaderShutdownTimeout = TimeSpan.FromSeconds(5);
+    }
 
-        private readonly BinaryReader _binaryReader;
-        private readonly BuildEventArgsReader _buildEventArgsReader;
-        private readonly Thread _readerThread;
-        private int _disposed;
-        private int _started;
+    /// <summary>
+    /// Creates a server that receives MSBuild events over a specified pipe.
+    /// </summary>
+    /// <param name="pipeStream">The pipe to receive events from.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
+    protected PipeLoggerServer(TPipeStream pipeStream, CancellationToken cancellationToken)
+        : this(pipeStream, cancellationToken, true)
+    {
+    }
 
-        internal PipeBuffer Buffer { get; } = new PipeBuffer();
-
-        /// <summary>
-        /// Gets the pipe stream read by this server.
-        /// </summary>
-        protected TPipeStream PipeStream { get; }
-
-        /// <summary>
-        /// Gets the token used to cancel read operations.
-        /// </summary>
-        protected CancellationToken CancellationToken { get; }
-
-        /// <summary>
-        /// Creates a server that receives MSBuild events over a specified pipe.
-        /// </summary>
-        /// <param name="pipeStream">The pipe to receive events from.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
-        protected PipeLoggerServer(TPipeStream pipeStream)
-            : this(pipeStream, CancellationToken.None)
+    /// <summary>
+    /// Creates a server that receives MSBuild events over a specified pipe.
+    /// </summary>
+    /// <param name="pipeStream">The pipe to receive events from.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
+    /// <param name="autoStart">A value indicating whether the background reader should start immediately.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
+    protected PipeLoggerServer(TPipeStream pipeStream, CancellationToken cancellationToken, bool autoStart)
+    {
+        PipeStream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
+        _binaryReader = new BinaryReader(Buffer);
+        _buildEventArgsReader = new BuildEventArgsReader(_binaryReader, GetBinaryLoggerFileFormatVersion());
+        CancellationToken = cancellationToken;
+        _readerThread = new Thread(ReadFromTransport)
         {
+            IsBackground = true,
+            Name = "MSBuild pipe logger reader"
+        };
+
+        if (autoStart)
+        {
+            StartReading();
+        }
+    }
+
+    /// <summary>
+    /// Connects the server-side pipe stream to a client.
+    /// </summary>
+    protected abstract void Connect();
+
+    /// <summary>
+    /// Starts the background reader thread.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The reader thread was already started.</exception>
+    protected void StartReading()
+    {
+        if (Interlocked.Exchange(ref _started, 1) != 0)
+        {
+            throw new InvalidOperationException("The logger server has already been started.");
         }
 
-        /// <summary>
-        /// Creates a server that receives MSBuild events over a specified pipe.
-        /// </summary>
-        /// <param name="pipeStream">The pipe to receive events from.</param>
-        /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
-        protected PipeLoggerServer(TPipeStream pipeStream, CancellationToken cancellationToken)
-            : this(pipeStream, cancellationToken, true)
-        {
-        }
+        _readerThread.Start();
+    }
 
-        /// <summary>
-        /// Creates a server that receives MSBuild events over a specified pipe.
-        /// </summary>
-        /// <param name="pipeStream">The pipe to receive events from.</param>
-        /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
-        /// <param name="autoStart">A value indicating whether the background reader should start immediately.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
-        protected PipeLoggerServer(TPipeStream pipeStream, CancellationToken cancellationToken, bool autoStart)
+    private void ReadFromTransport()
+    {
+        try
         {
-            PipeStream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
-            _binaryReader = new BinaryReader(Buffer);
-            _buildEventArgsReader = new BuildEventArgsReader(_binaryReader, GetBinaryLoggerFileFormatVersion());
-            CancellationToken = cancellationToken;
-            _readerThread = new Thread(ReadFromTransport)
+            Connect();
+            while (Buffer.FillFromStream(PipeStream, CancellationToken))
             {
-                IsBackground = true,
-                Name = "MSBuild pipe logger reader"
-            };
-
-            if (autoStart)
-            {
-                StartReading();
             }
         }
-
-        /// <summary>
-        /// Connects the server-side pipe stream to a client.
-        /// </summary>
-        protected abstract void Connect();
-
-        /// <summary>
-        /// Starts the background reader thread.
-        /// </summary>
-        /// <exception cref="InvalidOperationException">The reader thread was already started.</exception>
-        protected void StartReading()
+        catch (IOException)
         {
-            if (Interlocked.Exchange(ref _started, 1) != 0)
-            {
-                throw new InvalidOperationException("The logger server has already been started.");
-            }
+            // The client broke the stream so we're done.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The pipe was disposed.
+        }
+        finally
+        {
+            // Add a final 0 (BinaryLogRecordKind.EndOfFile) into the stream in case the BuildEventArgsReader is waiting for a read.
+            Buffer.TryWriteEndOfFile();
+            Buffer.CompleteAdding();
+        }
+    }
 
-            _readerThread.Start();
+    private static int GetBinaryLoggerFileFormatVersion()
+    {
+        var fileFormatVersionField = typeof(BinaryLogger).GetField(
+                                         "FileFormatVersion",
+                                         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                                     ?? throw new MissingFieldException(typeof(BinaryLogger).FullName ?? typeof(BinaryLogger).Name, "FileFormatVersion");
+
+        var fileFormatVersion = fileFormatVersionField.GetValue(null);
+        if (fileFormatVersion is not int version)
+        {
+            throw new InvalidOperationException(
+                $"Field '{typeof(BinaryLogger).FullName}.FileFormatVersion' must be an integer.");
         }
 
-        private void ReadFromTransport()
+        return version;
+    }
+
+    /// <inheritdoc/>
+    public BuildEventArgs? Read()
+    {
+        if (Volatile.Read(ref _disposed) != 0 || Buffer.IsCompleted)
         {
-            try
-            {
-                Connect();
-                while (Buffer.FillFromStream(PipeStream, CancellationToken))
-                {
-                }
-            }
-            catch (IOException)
-            {
-                // The client broke the stream so we're done.
-            }
-            catch (ObjectDisposedException)
-            {
-                // The pipe was disposed.
-            }
-            finally
-            {
-                // Add a final 0 (BinaryLogRecordKind.EndOfFile) into the stream in case the BuildEventArgsReader is waiting for a read.
-                Buffer.TryWriteEndOfFile();
-                Buffer.CompleteAdding();
-            }
-        }
-
-        private static int GetBinaryLoggerFileFormatVersion()
-        {
-            FieldInfo fileFormatVersionField = typeof(BinaryLogger).GetField(
-                "FileFormatVersion",
-                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                ?? throw new MissingFieldException(typeof(BinaryLogger).FullName ?? typeof(BinaryLogger).Name, "FileFormatVersion");
-
-            object? fileFormatVersion = fileFormatVersionField.GetValue(null);
-            if (fileFormatVersion is not int version)
-            {
-                throw new InvalidOperationException(
-                    $"Field '{typeof(BinaryLogger).FullName}.FileFormatVersion' must be an integer.");
-            }
-
-            return version;
-        }
-
-        /// <inheritdoc/>
-        public BuildEventArgs? Read()
-        {
-            if (Volatile.Read(ref _disposed) != 0 || Buffer.IsCompleted)
-            {
-                return null;
-            }
-
-            try
-            {
-                BuildEventArgs? args = _buildEventArgsReader.Read();
-                if (args is not null)
-                {
-                    Dispatch(args);
-                    return args;
-                }
-            }
-            catch (EndOfStreamException)
-            {
-                // The stream may have been closed or otherwise stopped.
-            }
-            catch (ObjectDisposedException)
-            {
-                // The server was disposed while reading.
-            }
-
             return null;
         }
 
-        /// <inheritdoc/>
-        public void ReadAll()
+        try
         {
-            BuildEventArgs? args = Read();
-            while (args is not null)
+            var args = _buildEventArgsReader.Read();
+            if (args is not null)
             {
-                if (args is BuildFinishedEventArgs)
-                {
-                    return;
-                }
-                args = Read();
+                Dispatch(args);
+                return args;
             }
         }
-
-        /// <inheritdoc/>
-        public virtual void Dispose()
+        catch (EndOfStreamException)
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            // The stream may have been closed or otherwise stopped.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The server was disposed while reading.
+        }
+
+        return null;
+    }
+
+    /// <inheritdoc/>
+    public void ReadAll()
+    {
+        var args = Read();
+        while (args is not null)
+        {
+            if (args is BuildFinishedEventArgs)
             {
                 return;
             }
 
-            DisposePipeStream();
-            Buffer.CompleteAdding();
+            args = Read();
+        }
+    }
 
-            if (Volatile.Read(ref _started) != 0 && Thread.CurrentThread.ManagedThreadId != _readerThread.ManagedThreadId)
-            {
-                _readerThread.Join(ReaderShutdownTimeout);
-            }
-
-            _buildEventArgsReader.Dispose();
-            _binaryReader.Dispose();
-            Buffer.Dispose();
+    /// <inheritdoc/>
+    public virtual void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
         }
 
-        private void DisposePipeStream()
+        DisposePipeStream();
+        Buffer.CompleteAdding();
+
+        if (Volatile.Read(ref _started) != 0 && Thread.CurrentThread.ManagedThreadId != _readerThread.ManagedThreadId)
         {
-            try
-            {
-                PipeStream.Dispose();
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+            _readerThread.Join(ReaderShutdownTimeout);
+        }
+
+        _buildEventArgsReader.Dispose();
+        _binaryReader.Dispose();
+        Buffer.Dispose();
+    }
+
+    private void DisposePipeStream()
+    {
+        try
+        {
+            PipeStream.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 }
