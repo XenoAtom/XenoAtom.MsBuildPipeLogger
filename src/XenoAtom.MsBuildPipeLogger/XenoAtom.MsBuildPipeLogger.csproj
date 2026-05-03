@@ -4,7 +4,7 @@
     <IsPackable>true</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Description>Receives MSBuild event data over pipes and includes an isolated MSBuild logger assembly.</Description>
-    <PackageTags>msbuild;logger;binarylog;pipe;named-pipe;build;dotnet;csharp;cross-platform</PackageTags>
+    <PackageTags>msbuild;msbuild-logger;binarylog</PackageTags>
     <LoggerContentDirectory>XenoAtom.MsBuildPipeLogger</LoggerContentDirectory>
     <LoggerAssemblyName>XenoAtom.MsBuildPipeLogger.Logger.dll</LoggerAssemblyName>
     <LoggerAssemblyPath>..\XenoAtom.MsBuildPipeLogger.Logger\bin\$(Configuration)\netstandard2.0\$(LoggerAssemblyName)</LoggerAssemblyPath>
