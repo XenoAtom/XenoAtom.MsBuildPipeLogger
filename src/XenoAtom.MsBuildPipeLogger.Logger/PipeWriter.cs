@@ -3,7 +3,6 @@
 // See license.txt file in the project root for full license information.
 
 using System.Collections.Concurrent;
-using System.IO.Pipes;
 using Microsoft.Build.Framework;
 
 namespace XenoAtom.MsBuildPipeLogger;
@@ -71,7 +70,8 @@ public abstract class PipeWriter : IPipeWriter
             writerCompleted = _doneProcessing.Wait(DisposeTimeout);
         }
 
-        DrainPipe();
+        // Do not wait for the peer to drain the pipe here: a crashed or paused server could otherwise
+        // hang MSBuild shutdown indefinitely after all writes have completed.
         DisposeStream();
         _binaryWriter.Dispose();
         _memoryStream.Dispose();
@@ -151,36 +151,6 @@ public abstract class PipeWriter : IPipeWriter
         }
     }
 
-    private void DrainPipe()
-    {
-        if (_stream is not PipeStream pipeStream)
-        {
-            return;
-        }
-
-        if (!IsWindows)
-        {
-            return;
-        }
-
-        try
-        {
-            pipeStream.WaitForPipeDrain();
-        }
-        catch (IOException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-        catch (PlatformNotSupportedException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-        }
-    }
-
     private void DisposeStream()
     {
         try
@@ -191,10 +161,4 @@ public abstract class PipeWriter : IPipeWriter
         {
         }
     }
-
-    private static readonly bool IsWindows = Environment.OSVersion.Platform == PlatformID.Win32NT ||
-                                             Environment.OSVersion.Platform == PlatformID.Win32S ||
-                                             Environment.OSVersion.Platform == PlatformID.Win32Windows ||
-                                             Environment.OSVersion.Platform == PlatformID.WinCE ||
-                                             Environment.OSVersion.Platform == PlatformID.Xbox;
 }
