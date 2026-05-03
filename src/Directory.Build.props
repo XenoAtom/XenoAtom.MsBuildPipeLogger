@@ -8,11 +8,11 @@
     <WarningsAsErrors>$(WarningsAsErrors);nullable</WarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup>
-    <Authors>Alexandre Mutel</Authors>
-    <Copyright>Alexandre Mutel</Copyright>
+    <Authors>Alexandre Mutel;Dave Glick</Authors>
+    <Copyright>Copyright (c) 2017 Dave Glick; Copyright (c) 2026 Alexandre Mutel</Copyright>
     <NeutralLanguage>en-US</NeutralLanguage>
     <PackageProjectUrl>https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger</PackageProjectUrl>
-    <PackageLicenseExpression>BSD-2-Clause</PackageLicenseExpression>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
     <PackageIcon>XenoAtom.MsBuildPipeLogger.png</PackageIcon>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>

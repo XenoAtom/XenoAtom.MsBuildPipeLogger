@@ -26,10 +26,18 @@ The package copies `XenoAtom.MsBuildPipeLogger.Logger.dll` to an isolated `XenoA
 
 For more details on how to use XenoAtom.MsBuildPipeLogger, please visit the [user guide](https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger/blob/main/doc/readme.md).
 
-## 🪪 License
-
-This software is released under the [BSD-2-Clause license](https://opensource.org/licenses/BSD-2-Clause).
-
 ## 🤗 Author
 
 Alexandre Mutel aka [XenoAtom](https://xoofx.github.io).
+
+## 🪪 License and attribution
+
+This software is released under the [MIT license](https://opensource.org/licenses/MIT), matching the upstream project license so the fork does not require relicensing.
+
+Copyright (c) 2017 Dave Glick<br>
+Copyright (c) 2026 Alexandre Mutel
+
+XenoAtom.MsBuildPipeLogger is a fork of Dave Glick's [MsBuildPipeLogger](https://github.com/daveaglick/MsBuildPipeLogger). Special thanks to Dave Glick for creating and sharing the original project.
+
+> [!NOTE]
+> This fork packages the receiver APIs and bundled `netstandard2.0` MSBuild logger as a single XenoAtom package, keeps the logger assembly isolated in the output to avoid MSBuild probing unrelated assemblies, and adds helper APIs and nullable-enabled package metadata for current .NET usage.
