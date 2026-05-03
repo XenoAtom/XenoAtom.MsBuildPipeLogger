@@ -15,6 +15,8 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </remarks>
 public class PipeLogger : Logger
 {
+    private IEventSource? _eventSource;
+
     /// <summary>
     /// Gets the active pipe writer after the logger has been initialized.
     /// </summary>
@@ -61,14 +63,26 @@ public class PipeLogger : Logger
             throw new ArgumentNullException(nameof(eventSource));
         }
 
-        eventSource.AnyEventRaised += (_, e) => Pipe?.Write(e);
+        _eventSource = eventSource;
+        eventSource.AnyEventRaised += OnAnyEventRaised;
     }
 
     /// <inheritdoc/>
     public override void Shutdown()
     {
         base.Shutdown();
+        if (_eventSource is not null)
+        {
+            _eventSource.AnyEventRaised -= OnAnyEventRaised;
+            _eventSource = null;
+        }
+
         Pipe?.Dispose();
         Pipe = null;
+    }
+
+    private void OnAnyEventRaised(object sender, BuildEventArgs e)
+    {
+        Pipe?.Write(e);
     }
 }

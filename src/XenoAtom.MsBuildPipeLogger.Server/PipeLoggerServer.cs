@@ -21,6 +21,8 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
 
     private readonly BinaryReader _binaryReader;
     private readonly BuildEventArgsReader _buildEventArgsReader;
+    private readonly CancellationTokenRegistration _cancellationRegistration;
+    private readonly object _readLock = new();
     private readonly Thread _readerThread;
     private int _disposed;
     private int _started;
@@ -71,6 +73,11 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         _binaryReader = new BinaryReader(Buffer);
         _buildEventArgsReader = new BuildEventArgsReader(_binaryReader, GetBinaryLoggerFileFormatVersion());
         CancellationToken = cancellationToken;
+        if (cancellationToken.CanBeCanceled)
+        {
+            _cancellationRegistration = cancellationToken.Register(DisposePipeStream);
+        }
+
         _readerThread = new Thread(ReadFromTransport)
         {
             IsBackground = true,
@@ -119,6 +126,14 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         {
             // The pipe was disposed.
         }
+        catch (OperationCanceledException)
+        {
+            // The operation was canceled.
+        }
+        catch (InvalidOperationException)
+        {
+            // The pipe reached an invalid state while shutting down.
+        }
         finally
         {
             // Add a final 0 (BinaryLogRecordKind.EndOfFile) into the stream in case the BuildEventArgsReader is waiting for a read.
@@ -154,11 +169,14 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
 
         try
         {
-            var args = _buildEventArgsReader.Read();
-            if (args is not null)
+            lock (_readLock)
             {
-                Dispatch(args);
-                return args;
+                var args = _buildEventArgsReader.Read();
+                if (args is not null)
+                {
+                    Dispatch(args);
+                    return args;
+                }
             }
         }
         catch (EndOfStreamException)
@@ -196,6 +214,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
             return;
         }
 
+        _cancellationRegistration.Dispose();
         DisposePipeStream();
         Buffer.CompleteAdding();
 

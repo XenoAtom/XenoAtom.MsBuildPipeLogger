@@ -26,6 +26,7 @@ public abstract class PipeWriter : IPipeWriter
     private readonly MemoryStream _memoryStream = new();
 
     private int _disposed;
+    private int _stopped;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PipeWriter"/> class.
@@ -89,7 +90,7 @@ public abstract class PipeWriter : IPipeWriter
             throw new ArgumentNullException(nameof(e));
         }
 
-        if (Volatile.Read(ref _disposed) != 0 || _queue.IsAddingCompleted)
+        if (Volatile.Read(ref _disposed) != 0 || Volatile.Read(ref _stopped) != 0 || _queue.IsAddingCompleted)
         {
             return;
         }
@@ -141,6 +142,7 @@ public abstract class PipeWriter : IPipeWriter
         }
         finally
         {
+            Volatile.Write(ref _stopped, 1);
             _doneProcessing.Set();
         }
     }

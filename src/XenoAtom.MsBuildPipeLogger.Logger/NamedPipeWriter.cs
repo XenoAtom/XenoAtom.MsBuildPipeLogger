@@ -11,6 +11,8 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </summary>
 public class NamedPipeWriter : PipeWriter
 {
+    private const int ConnectTimeoutMilliseconds = 30000;
+
     /// <summary>
     /// Gets the named pipe server name.
     /// </summary>
@@ -27,6 +29,7 @@ public class NamedPipeWriter : PipeWriter
     /// <param name="pipeName">The named pipe name.</param>
     /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or whitespace.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="pipeName"/> is <see langword="null"/>.</exception>
+    /// <exception cref="TimeoutException">The named pipe server did not accept the connection before the connection timeout elapsed.</exception>
     public NamedPipeWriter(string pipeName)
         : this(".", pipeName)
     {
@@ -39,6 +42,7 @@ public class NamedPipeWriter : PipeWriter
     /// <param name="pipeName">The named pipe name.</param>
     /// <exception cref="ArgumentException"><paramref name="serverName"/> or <paramref name="pipeName"/> is empty or whitespace.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="serverName"/> or <paramref name="pipeName"/> is <see langword="null"/>.</exception>
+    /// <exception cref="TimeoutException">The named pipe server did not accept the connection before the connection timeout elapsed.</exception>
     public NamedPipeWriter(string serverName, string pipeName)
         : base(InitializePipe(serverName, pipeName))
     {
@@ -50,8 +54,16 @@ public class NamedPipeWriter : PipeWriter
     {
         ValidatePipeEndpoint(serverName, pipeName);
         var pipeStream = new NamedPipeClientStream(serverName, pipeName, PipeDirection.Out);
-        pipeStream.Connect();
-        return pipeStream;
+        try
+        {
+            pipeStream.Connect(ConnectTimeoutMilliseconds);
+            return pipeStream;
+        }
+        catch
+        {
+            pipeStream.Dispose();
+            throw;
+        }
     }
 
     private static void ValidatePipeEndpoint(string serverName, string pipeName)
