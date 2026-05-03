@@ -5,3 +5,5 @@ project = "XenoAtom.MsBuildPipeLogger.slnx"
 [github]
 user = "XenoAtom"
 repo = "XenoAtom.MsBuildPipeLogger"
+[changelog]
+owners = ["xoofx"] # To avoid to be mentioned in the changelog
