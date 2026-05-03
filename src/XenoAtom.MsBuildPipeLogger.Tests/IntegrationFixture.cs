@@ -1,49 +1,51 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
+using System.Reflection;
 using System.Threading;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Logging;
-using NUnit.Framework;
-using Shouldly;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace MsBuildPipeLogger.Tests
 {
-    [TestFixture]
-    [NonParallelizable]
+    [TestClass]
+    [DoNotParallelize]
     public class IntegrationFixture
     {
-        private static readonly int[] MessageCounts = { 0, 1, 100000 };
+        public TestContext TestContext { get; set; } = null!;
 
-        [Test]
-        public void SerializesData([ValueSource(nameof(MessageCounts))] int messageCount)
+        [TestMethod]
+        [DataRow(0)]
+        [DataRow(1)]
+        [DataRow(100000)]
+        public void SerializesData(int messageCount)
         {
             // Given
             Stopwatch sw = new Stopwatch();
             MemoryStream memory = new MemoryStream();
             BinaryWriter binaryWriter = new BinaryWriter(memory);
-            BuildEventArgsWriter writer = new BuildEventArgsWriter(binaryWriter);
+            BuildEventArgsWriterProxy writer = new BuildEventArgsWriterProxy(binaryWriter);
             BinaryReader binaryReader = new BinaryReader(memory);
-            BuildEventArgsReaderProxy reader = new BuildEventArgsReaderProxy(binaryReader);
+            BuildEventArgsReader reader = new BuildEventArgsReader(binaryReader, GetBinaryLoggerFileFormatVersion());
             List<BuildEventArgs> eventArgs = new List<BuildEventArgs>();
 
             // When
             sw.Start();
-            writer.Write(new BuildStartedEventArgs($"Testing", "help"));
+            writer.Write(new BuildStartedEventArgs("Testing", "help"));
             for (int m = 0; m < messageCount; m++)
             {
                 writer.Write(new BuildMessageEventArgs($"Testing {m}", "help", "sender", MessageImportance.Normal));
             }
             sw.Stop();
-            TestContext.Out.WriteLine($"Serialization completed in {sw.ElapsedMilliseconds} ms");
+            TestContext.WriteLine($"Serialization completed in {sw.ElapsedMilliseconds} ms");
 
             memory.Position = 0;
             sw.Restart();
-            BuildEventArgs e;
-            while ((e = reader.Read()) != null)
+            BuildEventArgs? e;
+            while ((e = reader.Read()) is not null)
             {
                 eventArgs.Add(e);
                 if (memory.Position >= memory.Length)
@@ -52,25 +54,25 @@ namespace MsBuildPipeLogger.Tests
                 }
             }
             sw.Stop();
-            TestContext.Out.WriteLine($"Deserialization completed in {sw.ElapsedMilliseconds} ms");
+            TestContext.WriteLine($"Deserialization completed in {sw.ElapsedMilliseconds} ms");
 
             // Then
-            eventArgs.Count.ShouldBe(messageCount + 1);
-            eventArgs[0].ShouldBeOfType<BuildStartedEventArgs>();
-            eventArgs[0].Message.ShouldBe("Testing");
+            Assert.AreEqual(messageCount + 1, eventArgs.Count);
+            Assert.IsInstanceOfType(eventArgs[0], typeof(BuildStartedEventArgs));
+            Assert.AreEqual("Testing", eventArgs[0].Message);
             int c = 0;
             foreach (BuildEventArgs eventArg in eventArgs.Skip(1))
             {
-                eventArg.ShouldBeOfType<BuildMessageEventArgs>();
-                eventArg.Message.ShouldBe($"Testing {c++}");
+                Assert.IsInstanceOfType(eventArg, typeof(BuildMessageEventArgs));
+                Assert.AreEqual($"Testing {c++}", eventArg.Message);
             }
         }
 
-        [Test]
+        [TestMethod]
         public void NamedPipeSupportsCancellation()
         {
             // Given
-            BuildEventArgs buildEvent = null;
+            BuildEventArgs? buildEvent;
             using (CancellationTokenSource tokenSource = new CancellationTokenSource())
             {
                 using (NamedPipeLoggerServer server = new NamedPipeLoggerServer("Foo", tokenSource.Token))
@@ -82,11 +84,14 @@ namespace MsBuildPipeLogger.Tests
             }
 
             // Then
-            buildEvent.ShouldBeNull();
+            Assert.IsNull(buildEvent);
         }
 
-        [Test]
-        public void SendsDataOverAnonymousPipe([ValueSource(nameof(MessageCounts))] int messageCount)
+        [TestMethod]
+        [DataRow(0)]
+        [DataRow(1)]
+        [DataRow(100000)]
+        public void SendsDataOverAnonymousPipe(int messageCount)
         {
             // Given
             List<BuildEventArgs> eventArgs = new List<BuildEventArgs>();
@@ -100,20 +105,23 @@ namespace MsBuildPipeLogger.Tests
             }
 
             // Then
-            exitCode.ShouldBe(0);
-            eventArgs.Count.ShouldBe(messageCount + 1);
-            eventArgs[0].ShouldBeOfType<BuildStartedEventArgs>();
-            eventArgs[0].Message.ShouldBe("Testing");
+            Assert.AreEqual(0, exitCode);
+            Assert.AreEqual(messageCount + 1, eventArgs.Count);
+            Assert.IsInstanceOfType(eventArgs[0], typeof(BuildStartedEventArgs));
+            Assert.AreEqual("Testing", eventArgs[0].Message);
             int c = 0;
             foreach (BuildEventArgs eventArg in eventArgs.Skip(1))
             {
-                eventArg.ShouldBeOfType<BuildMessageEventArgs>();
-                eventArg.Message.ShouldBe($"Testing {c++}");
+                Assert.IsInstanceOfType(eventArg, typeof(BuildMessageEventArgs));
+                Assert.AreEqual($"Testing {c++}", eventArg.Message);
             }
         }
 
-        [Test]
-        public void SendsDataOverNamedPipe([ValueSource(nameof(MessageCounts))] int messageCount)
+        [TestMethod]
+        [DataRow(0)]
+        [DataRow(1)]
+        [DataRow(100000)]
+        public void SendsDataOverNamedPipe(int messageCount)
         {
             // Given
             List<BuildEventArgs> eventArgs = new List<BuildEventArgs>();
@@ -127,38 +135,77 @@ namespace MsBuildPipeLogger.Tests
             }
 
             // Then
-            exitCode.ShouldBe(0);
-            eventArgs.Count.ShouldBe(messageCount + 1);
-            eventArgs[0].ShouldBeOfType<BuildStartedEventArgs>();
-            eventArgs[0].Message.ShouldBe("Testing");
+            Assert.AreEqual(0, exitCode);
+            Assert.AreEqual(messageCount + 1, eventArgs.Count);
+            Assert.IsInstanceOfType(eventArgs[0], typeof(BuildStartedEventArgs));
+            Assert.AreEqual("Testing", eventArgs[0].Message);
             int c = 0;
             foreach (BuildEventArgs eventArg in eventArgs.Skip(1))
             {
-                eventArg.ShouldBeOfType<BuildMessageEventArgs>();
-                eventArg.Message.ShouldBe($"Testing {c++}");
+                Assert.IsInstanceOfType(eventArg, typeof(BuildMessageEventArgs));
+                Assert.AreEqual($"Testing {c++}", eventArg.Message);
             }
+        }
+
+        private static int GetBinaryLoggerFileFormatVersion()
+        {
+            FieldInfo fileFormatVersionField = typeof(BinaryLogger).GetField(
+                "FileFormatVersion",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new MissingFieldException(typeof(BinaryLogger).FullName, "FileFormatVersion");
+
+            object? fileFormatVersion = fileFormatVersionField.GetValue(null);
+            if (fileFormatVersion is not int version)
+            {
+                throw new InvalidOperationException(
+                    $"Field '{typeof(BinaryLogger).FullName}.FileFormatVersion' must be an integer.");
+            }
+
+            return version;
         }
 
         private int RunClientProcess(IPipeLoggerServer server, string arguments, int messages)
         {
-            Process process = new Process();
-            int exitCode;
+            using Process process = new Process();
+            int exitCode = -1;
+            bool started = false;
             try
             {
+                string testDirectory = Path.GetDirectoryName(typeof(IntegrationFixture).Assembly.Location)
+                    ?? throw new InvalidOperationException("Could not locate test assembly directory.");
+                string clientDirectory = testDirectory.Replace(
+                    "XenoAtom.MsBuildPipeLogger.Tests",
+                    "XenoAtom.MsBuildPipeLogger.Tests.Client",
+                    StringComparison.Ordinal);
+                string clientAssemblyPath = Path.Combine(clientDirectory, "XenoAtom.MsBuildPipeLogger.Tests.Client.dll");
+
                 process.StartInfo.FileName = "dotnet";
-                process.StartInfo.Arguments = $"MsBuildPipeLogger.Tests.Client.dll {arguments} {messages}";
-                process.StartInfo.WorkingDirectory = Path.GetDirectoryName(typeof(IntegrationFixture).Assembly.Location).Replace("MsBuildPipeLogger.Tests", "MsBuildPipeLogger.Tests.Client");
+                process.StartInfo.Arguments = $"\"{clientAssemblyPath}\" \"{arguments}\" {messages}";
+                process.StartInfo.WorkingDirectory = clientDirectory;
                 process.StartInfo.CreateNoWindow = true;
                 process.StartInfo.UseShellExecute = false;
 
                 process.StartInfo.RedirectStandardOutput = true;
                 process.StartInfo.RedirectStandardError = true;
-                process.OutputDataReceived += (s, e) => TestContext.WriteLine(e.Data);
-                process.ErrorDataReceived += (s, e) => TestContext.WriteLine(e.Data);
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data is not null)
+                    {
+                        TestContext.WriteLine(e.Data);
+                    }
+                };
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data is not null)
+                    {
+                        TestContext.WriteLine(e.Data);
+                    }
+                };
 
-                process.Start();
+                started = process.Start();
                 TestContext.WriteLine($"Started process {process.Id}");
                 process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
 
                 server.ReadAll();
             }
@@ -168,10 +215,12 @@ namespace MsBuildPipeLogger.Tests
             }
             finally
             {
-                process.WaitForExit();
-                exitCode = process.ExitCode;
-                TestContext.WriteLine($"Exited process {process.Id} with code {exitCode}");
-                process.Close();
+                if (started)
+                {
+                    process.WaitForExit();
+                    exitCode = process.ExitCode;
+                    TestContext.WriteLine($"Exited process {process.Id} with code {exitCode}");
+                }
             }
             return exitCode;
         }
