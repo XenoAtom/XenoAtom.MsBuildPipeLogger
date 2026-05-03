@@ -12,87 +12,72 @@ namespace MsBuildPipeLogger
     /// </summary>
     public abstract class PipeWriter : IPipeWriter
     {
+        private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(30);
+
         private readonly BlockingCollection<BuildEventArgs> _queue =
             new BlockingCollection<BuildEventArgs>(new ConcurrentQueue<BuildEventArgs>());
 
-        private readonly AutoResetEvent _doneProcessing = new AutoResetEvent(false);
-
-        private readonly PipeStream _pipeStream;
+        private readonly ManualResetEventSlim _doneProcessing = new ManualResetEventSlim(false);
+        private readonly Stream _stream;
         private readonly BinaryWriter _binaryWriter;
         private readonly BuildEventArgsWriterProxy _argsWriter;
 
         // Buffer writes through a memory stream since the args writer does a bunch of small writes
         private readonly MemoryStream _memoryStream = new MemoryStream();
 
+        private int _disposed;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="PipeWriter"/> class.
         /// </summary>
-        /// <param name="pipeStream">The connected pipe stream to write to.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="pipeStream"/> is <see langword="null"/>.</exception>
-        protected PipeWriter(PipeStream pipeStream)
+        /// <param name="stream">The connected stream to write to.</param>
+        /// <exception cref="ArgumentNullException"><paramref name="stream"/> is <see langword="null"/>.</exception>
+        protected PipeWriter(Stream stream)
         {
-            _pipeStream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
+            _stream = stream ?? throw new ArgumentNullException(nameof(stream));
             _binaryWriter = new BinaryWriter(_memoryStream);
             _argsWriter = new BuildEventArgsWriterProxy(_binaryWriter);
-
-            Thread writerThread = new Thread(() =>
-            {
-                BuildEventArgs? eventArgs;
-                while ((eventArgs = TakeEventArgs()) is not null)
-                {
-                    // Reset the memory stream (but reuse the memory)
-                    _memoryStream.Seek(0, SeekOrigin.Begin);
-                    _memoryStream.SetLength(0);
-
-                    // Buffer to the memory stream
-                    _argsWriter.Write(eventArgs);
-                    _binaryWriter.Flush();
-
-                    // ...then write that to the pipe
-                    _memoryStream.WriteTo(_pipeStream);
-                    _pipeStream.Flush();
-                }
-                _doneProcessing.Set();
-            })
+            Thread writerThread = new Thread(ProcessQueue)
             {
                 IsBackground = true,
+                Name = "MSBuild pipe logger writer"
             };
             writerThread.Start();
-        }
-
-        private BuildEventArgs? TakeEventArgs()
-        {
-            if (!_queue.IsCompleted)
-            {
-                try
-                {
-                    return _queue.Take();
-                }
-                catch (InvalidOperationException)
-                {
-                }
-            }
-            return null;
         }
 
         /// <inheritdoc/>
         public void Dispose()
         {
-            if (!_queue.IsAddingCompleted)
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
             {
-                try
-                {
-                    _queue.CompleteAdding();
-                    _doneProcessing.WaitOne();
-                    if (IsWindows)
-                    {
-                        _pipeStream.WaitForPipeDrain();
-                    }
-                    _pipeStream.Dispose();
-                }
-                catch
-                {
-                }
+                return;
+            }
+
+            try
+            {
+                _queue.CompleteAdding();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            bool writerCompleted = _doneProcessing.Wait(DisposeTimeout);
+            if (!writerCompleted)
+            {
+                // A broken peer can block a pipe write indefinitely. Disposing the transport unblocks the
+                // background writer at the cost of dropping any data that could not be flushed in time.
+                DisposeStream();
+                writerCompleted = _doneProcessing.Wait(DisposeTimeout);
+            }
+
+            DrainPipe();
+            DisposeStream();
+            _binaryWriter.Dispose();
+            _memoryStream.Dispose();
+            if (writerCompleted)
+            {
+                _queue.Dispose();
+                _doneProcessing.Dispose();
             }
         }
 
@@ -103,7 +88,94 @@ namespace MsBuildPipeLogger
             {
                 throw new ArgumentNullException(nameof(e));
             }
-            _queue.Add(e);
+
+            if (Volatile.Read(ref _disposed) != 0 || _queue.IsAddingCompleted)
+            {
+                return;
+            }
+
+            try
+            {
+                _queue.Add(e);
+            }
+            catch (ObjectDisposedException)
+            {
+                // The writer is shutting down and no longer accepts events.
+            }
+            catch (InvalidOperationException)
+            {
+                // The writer is shutting down and no longer accepts events.
+            }
+        }
+
+        private void ProcessQueue()
+        {
+            try
+            {
+                foreach (BuildEventArgs eventArgs in _queue.GetConsumingEnumerable())
+                {
+                    // Reset the memory stream (but reuse the memory)
+                    _memoryStream.Seek(0, SeekOrigin.Begin);
+                    _memoryStream.SetLength(0);
+
+                    // Buffer to the memory stream
+                    _argsWriter.Write(eventArgs);
+                    _binaryWriter.Flush();
+
+                    // ...then write that to the pipe
+                    _memoryStream.WriteTo(_stream);
+                    _stream.Flush();
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // The transport or queue was disposed while the writer was shutting down.
+            }
+            catch (InvalidOperationException)
+            {
+                // The queue was completed or disposed while the writer was shutting down.
+            }
+            catch (IOException)
+            {
+                // The server closed the transport.
+            }
+            finally
+            {
+                _doneProcessing.Set();
+            }
+        }
+
+        private void DrainPipe()
+        {
+            if (_stream is not PipeStream pipeStream || !IsWindows)
+            {
+                return;
+            }
+
+            try
+            {
+                pipeStream.WaitForPipeDrain();
+            }
+            catch (IOException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (PlatformNotSupportedException)
+            {
+            }
+        }
+
+        private void DisposeStream()
+        {
+            try
+            {
+                _stream.Dispose();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         private static readonly bool IsWindows = Environment.OSVersion.Platform == PlatformID.Win32NT ||

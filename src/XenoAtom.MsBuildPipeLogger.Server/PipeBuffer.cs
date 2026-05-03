@@ -18,7 +18,19 @@ namespace MsBuildPipeLogger
 
         private Buffer? _current;
 
-        public void CompleteAdding() => _queue.CompleteAdding();
+        public void CompleteAdding()
+        {
+            try
+            {
+                if (!_queue.IsAddingCompleted)
+                {
+                    _queue.CompleteAdding();
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
 
         public bool IsCompleted => _queue.IsCompleted;
 
@@ -33,37 +45,78 @@ namespace MsBuildPipeLogger
             {
                 buffer = new Buffer();
             }
+
             if (buffer.FillFromStream(stream, cancellationToken) == 0)
             {
                 // Didn't write anything, return it to the pool
                 _pool.Add(buffer);
                 return false;
             }
-            _queue.Add(buffer);
-            return true;
+
+            try
+            {
+                _queue.Add(buffer, cancellationToken);
+                return true;
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            if (buffer.FromPool)
+            {
+                _pool.Add(buffer);
+            }
+            return false;
+        }
+
+        public bool TryWriteEndOfFile()
+        {
+            try
+            {
+                Write(new byte[1], 0, 1);
+                return true;
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
         }
 
         public override void Write(byte[] buffer, int offset, int count)
         {
-            if (buffer is null)
+            ValidateBufferArguments(buffer, offset, count);
+            try
             {
-                throw new ArgumentNullException(nameof(buffer));
+                _queue.Add(new Buffer(buffer, offset, count));
             }
-            _queue.Add(new Buffer(buffer, offset, count));
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            if (buffer is null)
-            {
-                throw new ArgumentNullException(nameof(buffer));
-            }
+            ValidateBufferArguments(buffer, offset, count);
 
             int read = 0;
             while (read < count)
             {
                 // Ensure a buffer is available
-                if (TryTakeBuffer(out Buffer current))
+                Buffer? current = TakeBuffer();
+                if (current is not null)
                 {
                     // Get as much as we can from the current buffer
                     read += current.Read(buffer, offset + read, count - read);
@@ -85,35 +138,63 @@ namespace MsBuildPipeLogger
             return read;
         }
 
-        private bool TryTakeBuffer(out Buffer buffer)
+        protected override void Dispose(bool disposing)
         {
-            if (_current is null)
+            if (disposing)
             {
-                // Take() can throw when marked as complete from another thread
-                // https://docs.microsoft.com/en-us/dotnet/api/system.collections.concurrent.blockingcollection-1.take?view=netcore-3.1
-                try
-                {
-                    _current = _queue.Take();
-                }
-                catch (ObjectDisposedException)
-                {
-                    buffer = null!;
-                    return false;
-                }
-                catch (OperationCanceledException)
-                {
-                    buffer = null!;
-                    return false;
-                }
-                catch (InvalidOperationException)
-                {
-                    buffer = null!;
-                    return false;
-                }
+                CompleteAdding();
+                _queue.Dispose();
             }
 
-            buffer = _current;
-            return buffer is not null;
+            base.Dispose(disposing);
+        }
+
+        private static void ValidateBufferArguments(byte[] buffer, int offset, int count)
+        {
+            if (buffer is null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+            if (offset < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+            if (count < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+            if (buffer.Length - offset < count)
+            {
+                throw new ArgumentException("The offset and count exceed the buffer bounds.", nameof(count));
+            }
+        }
+
+        private Buffer? TakeBuffer()
+        {
+            if (_current is not null)
+            {
+                return _current;
+            }
+
+            // Take() can throw when marked as complete from another thread
+            // https://docs.microsoft.com/en-us/dotnet/api/system.collections.concurrent.blockingcollection-1.take?view=netcore-3.1
+            try
+            {
+                _current = _queue.Take();
+                return _current;
+            }
+            catch (ObjectDisposedException)
+            {
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
         }
 
         private class Buffer
@@ -134,35 +215,37 @@ namespace MsBuildPipeLogger
 
             public Buffer(byte[] buffer, int offset, int count)
             {
-                _buffer = buffer;
-                _offset = offset;
+                _buffer = new byte[count];
+                System.Buffer.BlockCopy(buffer, offset, _buffer, 0, count);
                 Count = count;
             }
 
             public int FillFromStream(Stream stream, CancellationToken cancellationToken)
             {
+                _offset = 0;
                 if (stream is AnonymousPipeServerStream || stream is AnonymousPipeClientStream)
                 {
                     // We can't use ReadAsync with Anonymous PipeStream
                     // https://github.com/dotnet/runtime/issues/23638
                     // https://docs.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
                     // Asynchronous (overlapped) read and write operations are not supported by anonymous pipes
-                    _offset = 0;
                     Count = cancellationToken.IsCancellationRequested ? 0 : stream.Read(_buffer, _offset, BufferSize);
                 }
                 else
                 {
-                    Count = cancellationToken.Try(
-                        () =>
-                        {
-                            _offset = 0;
-                            Task<int> readTask = stream.ReadAsync(_buffer, _offset, BufferSize, cancellationToken);
-#pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks. Use await or JoinableTaskFactory.Run instead.
-                            readTask.Wait(cancellationToken);
-                            return readTask.Status == TaskStatus.Canceled ? 0 : readTask.Result;
-#pragma warning restore VSTHRD002
-                        },
-                        () => 0);
+                    try
+                    {
+                        Task<int> readTask = stream.ReadAsync(_buffer, _offset, BufferSize, cancellationToken);
+                        Count = readTask.GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Count = 0;
+                    }
+                    catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        Count = 0;
+                    }
                 }
                 return Count;
             }
@@ -183,7 +266,7 @@ namespace MsBuildPipeLogger
 
         public override bool CanSeek => false;
 
-        public override bool CanWrite => false;
+        public override bool CanWrite => true;
 
         public override long Length => throw new NotSupportedException();
 
@@ -193,7 +276,9 @@ namespace MsBuildPipeLogger
             set => throw new NotSupportedException();
         }
 
-        public override void Flush() => throw new NotSupportedException();
+        public override void Flush()
+        {
+        }
 
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 

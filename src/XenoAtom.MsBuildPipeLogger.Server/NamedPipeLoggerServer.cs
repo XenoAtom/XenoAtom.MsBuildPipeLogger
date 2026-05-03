@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.IO.Pipes;
 using System.Threading;
 
@@ -9,7 +10,10 @@ namespace MsBuildPipeLogger
     /// </summary>
     public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
     {
+        private const int CancelConnectionTimeoutMilliseconds = 1000;
+
         private readonly InterlockedBool _connected = new InterlockedBool(false);
+        private readonly CancellationTokenRegistration _cancellationRegistration;
 
         /// <summary>
         /// Gets the named pipe name.
@@ -35,10 +39,18 @@ namespace MsBuildPipeLogger
         /// <exception cref="ArgumentException"><paramref name="pipeName"/> is empty or whitespace.</exception>
         /// <exception cref="ArgumentNullException"><paramref name="pipeName"/> is <see langword="null"/>.</exception>
         public NamedPipeLoggerServer(string pipeName, CancellationToken cancellationToken)
-            : base(CreatePipe(pipeName), cancellationToken)
+            : base(CreatePipe(pipeName), cancellationToken, false)
         {
             PipeName = pipeName;
-            CancellationToken.Register(CancelConnectionWait);
+            StartReading();
+            _cancellationRegistration = CancellationToken.Register(CancelConnectionWait);
+        }
+
+        /// <inheritdoc/>
+        public override void Dispose()
+        {
+            _cancellationRegistration.Dispose();
+            base.Dispose();
         }
 
         /// <inheritdoc/>
@@ -64,15 +76,28 @@ namespace MsBuildPipeLogger
 
         private void CancelConnectionWait()
         {
-            if (!_connected.Set())
+            if (_connected.Set())
             {
-                // This is a crazy hack that stops the WaitForConnection by connecting a dummy client
-                // We have to do it this way instead of checking for .IsConnected because if we connect
-                // and then disconnect very quickly, .IsConnected will never observe as true and we'll lock
+                return;
+            }
+
+            try
+            {
+                // This stops WaitForConnection by connecting a dummy client. Checking IsConnected is not
+                // reliable here because a quick connect/disconnect may never be observed as connected.
                 using (NamedPipeClientStream pipeStream = new NamedPipeClientStream(".", PipeName, PipeDirection.Out))
                 {
-                    pipeStream.Connect();
+                    pipeStream.Connect(CancelConnectionTimeoutMilliseconds);
                 }
+            }
+            catch (IOException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (TimeoutException)
+            {
             }
         }
     }

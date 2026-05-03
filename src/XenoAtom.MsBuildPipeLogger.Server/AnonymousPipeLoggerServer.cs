@@ -23,8 +23,9 @@ namespace MsBuildPipeLogger
         /// </summary>
         /// <param name="cancellationToken">A <see cref="CancellationToken"/> that will cancel read operations if triggered.</param>
         public AnonymousPipeLoggerServer(CancellationToken cancellationToken)
-            : base(new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable), cancellationToken)
+            : base(new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable), cancellationToken, false)
         {
+            StartReading();
         }
 
         /// <summary>
@@ -36,13 +37,13 @@ namespace MsBuildPipeLogger
         /// <inheritdoc/>
         protected override void Connect()
         {
-            // Wait for the first write, there's a chicken-and-egg problem with the pipe handle
-            // I can only dispose the local handle after the first pipe read, which blocks
-            // But I can only catch the pipe disposal from cancellation after the handle has been disposed
+            // Wait for the first write, there's a chicken-and-egg problem with the pipe handle.
+            // I can only dispose the local handle after the first pipe read, which blocks.
+            // But I can only catch the pipe disposal from cancellation after the handle has been disposed.
             Buffer.FillFromStream(PipeStream, CancellationToken);
 
-            // Dispose the client handle if we asked for one
-            // If we don't do this we won't get notified when the stream closes, see https://stackoverflow.com/q/39682602/807064
+            // Dispose the client handle if we asked for one.
+            // If we don't do this we won't get notified when the stream closes, see https://stackoverflow.com/q/39682602/807064.
             if (_clientHandle is not null)
             {
                 PipeStream.DisposeLocalCopyOfClientHandle();

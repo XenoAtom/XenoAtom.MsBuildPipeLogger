@@ -15,7 +15,7 @@ namespace MsBuildPipeLogger.Tests
     [DoNotParallelize]
     public class IntegrationFixture
     {
-        public TestContext TestContext { get; set; } = null!;
+        public TestContext? TestContext { get; set; }
 
         [TestMethod]
         [DataRow(0)]
@@ -40,7 +40,7 @@ namespace MsBuildPipeLogger.Tests
                 writer.Write(new BuildMessageEventArgs($"Testing {m}", "help", "sender", MessageImportance.Normal));
             }
             sw.Stop();
-            TestContext.WriteLine($"Serialization completed in {sw.ElapsedMilliseconds} ms");
+            WriteLine($"Serialization completed in {sw.ElapsedMilliseconds} ms");
 
             memory.Position = 0;
             sw.Restart();
@@ -54,7 +54,7 @@ namespace MsBuildPipeLogger.Tests
                 }
             }
             sw.Stop();
-            TestContext.WriteLine($"Deserialization completed in {sw.ElapsedMilliseconds} ms");
+            WriteLine($"Deserialization completed in {sw.ElapsedMilliseconds} ms");
 
             // Then
             Assert.AreEqual(messageCount + 1, eventArgs.Count);
@@ -147,6 +147,8 @@ namespace MsBuildPipeLogger.Tests
             }
         }
 
+        private void WriteLine(string message) => TestContext?.WriteLine(message);
+
         private static int GetBinaryLoggerFileFormatVersion()
         {
             FieldInfo fileFormatVersionField = typeof(BinaryLogger).GetField(
@@ -191,19 +193,19 @@ namespace MsBuildPipeLogger.Tests
                 {
                     if (e.Data is not null)
                     {
-                        TestContext.WriteLine(e.Data);
+                        WriteLine(e.Data);
                     }
                 };
                 process.ErrorDataReceived += (_, e) =>
                 {
                     if (e.Data is not null)
                     {
-                        TestContext.WriteLine(e.Data);
+                        WriteLine(e.Data);
                     }
                 };
 
                 started = process.Start();
-                TestContext.WriteLine($"Started process {process.Id}");
+                WriteLine($"Started process {process.Id}");
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
@@ -211,7 +213,7 @@ namespace MsBuildPipeLogger.Tests
             }
             catch (Exception ex)
             {
-                TestContext.WriteLine($"Process error: {ex}");
+                WriteLine($"Process error: {ex}");
             }
             finally
             {
@@ -219,7 +221,7 @@ namespace MsBuildPipeLogger.Tests
                 {
                     process.WaitForExit();
                     exitCode = process.ExitCode;
-                    TestContext.WriteLine($"Exited process {process.Id} with code {exitCode}");
+                    WriteLine($"Exited process {process.Id} with code {exitCode}");
                 }
             }
             return exitCode;
