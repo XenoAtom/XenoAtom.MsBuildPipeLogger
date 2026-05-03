@@ -88,33 +88,6 @@ namespace MsBuildPipeLogger.Tests
         }
 
         [TestMethod]
-        public void UnixDomainSocketSupportsCancellation()
-        {
-            // Given
-            string socketPath = CreateSocketPath();
-            BuildEventArgs? buildEvent;
-            try
-            {
-                using (CancellationTokenSource tokenSource = new CancellationTokenSource())
-                {
-                    using (UnixDomainSocketLoggerServer server = new UnixDomainSocketLoggerServer(socketPath, tokenSource.Token))
-                    {
-                        // When
-                        tokenSource.CancelAfter(1000); // The call to .Read() below will block so need to set a timeout for cancellation
-                        buildEvent = server.Read();
-                    }
-                }
-            }
-            finally
-            {
-                TryDeleteSocket(socketPath);
-            }
-
-            // Then
-            Assert.IsNull(buildEvent);
-        }
-
-        [TestMethod]
         [DataRow(0)]
         [DataRow(1)]
         [DataRow(100000)]
@@ -174,62 +147,7 @@ namespace MsBuildPipeLogger.Tests
             }
         }
 
-        [TestMethod]
-        [DataRow(0)]
-        [DataRow(1)]
-        [DataRow(100000)]
-        public void SendsDataOverUnixDomainSocket(int messageCount)
-        {
-            // Given
-            string socketPath = CreateSocketPath();
-            List<BuildEventArgs> eventArgs = new List<BuildEventArgs>();
-            int exitCode;
-            try
-            {
-                using (UnixDomainSocketLoggerServer server = new UnixDomainSocketLoggerServer(socketPath))
-                {
-                    server.AnyEventRaised += (s, e) => eventArgs.Add(e);
-
-                    // When
-                    exitCode = RunClientProcess(server, $"socket={socketPath}", messageCount);
-                }
-            }
-            finally
-            {
-                TryDeleteSocket(socketPath);
-            }
-
-            // Then
-            Assert.AreEqual(0, exitCode);
-            Assert.AreEqual(messageCount + 1, eventArgs.Count);
-            Assert.IsInstanceOfType(eventArgs[0], typeof(BuildStartedEventArgs));
-            Assert.AreEqual("Testing", eventArgs[0].Message);
-            int c = 0;
-            foreach (BuildEventArgs eventArg in eventArgs.Skip(1))
-            {
-                Assert.IsInstanceOfType(eventArg, typeof(BuildMessageEventArgs));
-                Assert.AreEqual($"Testing {c++}", eventArg.Message);
-            }
-        }
-
         private void WriteLine(string message) => TestContext?.WriteLine(message);
-
-        private static string CreateSocketPath() =>
-            Path.Combine(Path.GetTempPath(), $"xambpl-{Guid.NewGuid():N}.sock");
-
-        private static void TryDeleteSocket(string socketPath)
-        {
-            try
-            {
-                File.Delete(socketPath);
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
-        }
 
         private static int GetBinaryLoggerFileFormatVersion()
         {

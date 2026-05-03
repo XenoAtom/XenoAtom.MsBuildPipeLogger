@@ -151,11 +151,7 @@ namespace MsBuildPipeLogger
             {
                 return;
             }
-#if NET5_0_OR_GREATER
-            if (!OperatingSystem.IsWindows())
-#else
             if (!IsWindows)
-#endif
             {
                 return;
             }

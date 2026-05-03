@@ -11,8 +11,7 @@ namespace MsBuildPipeLogger
         {
             Handle,
             Name,
-            Server,
-            Socket
+            Server
         }
 
         public static IPipeWriter GetPipeFromParameters(string parameters)
@@ -39,16 +38,6 @@ namespace MsBuildPipeLogger
                 return new AnonymousPipeWriter(segments[0].Value);
             }
 
-            // Unix domain socket
-            if (segments[0].Key == ParameterType.Socket)
-            {
-                if (segments.Length > 1)
-                {
-                    throw new LoggerException("Socket can only be specified as a single parameter");
-                }
-                return CreateUnixDomainSocketWriter(segments[0].Value);
-            }
-
             // Named pipe
             if (segments[0].Key == ParameterType.Name)
             {
@@ -67,15 +56,6 @@ namespace MsBuildPipeLogger
                 throw new LoggerException("Pipe name must be specified for a named pipe");
             }
             return new NamedPipeWriter(segments[0].Value, segments[1].Value);
-        }
-
-        private static IPipeWriter CreateUnixDomainSocketWriter(string socketPath)
-        {
-#if NET5_0_OR_GREATER
-            return new UnixDomainSocketWriter(socketPath);
-#else
-            throw new LoggerException("Unix domain socket transport requires a .NET 5.0 or later logger assembly.");
-#endif
         }
 
         internal static KeyValuePair<ParameterType, string>[] ParseParameters(string parameters)

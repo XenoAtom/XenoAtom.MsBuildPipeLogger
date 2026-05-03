@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Threading;
 using Microsoft.Build.Framework;
@@ -13,7 +14,7 @@ namespace MsBuildPipeLogger
     /// </summary>
     /// <typeparam name="TPipeStream">The concrete pipe stream type.</typeparam>
     public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipeLoggerServer
-        where TPipeStream : Stream
+        where TPipeStream : PipeStream
     {
         private static readonly TimeSpan ReaderShutdownTimeout = TimeSpan.FromSeconds(5);
 

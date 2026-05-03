@@ -65,23 +65,6 @@ namespace MsBuildPipeLogger.Logger.Tests
         }
 
         [TestMethod]
-        [DataRow("socket=/tmp/xenoatom.sock")]
-        [DataRow("\"socket=/tmp/xenoatom.sock\"")]
-        [DataRow("SOCKET=/tmp/xenoatom.sock")]
-        [DataRow(" socket = /tmp/xenoatom.sock ")]
-        public void GetsUnixDomainSocket(string parameters)
-        {
-            // Given, When
-            KeyValuePair<ParameterParser.ParameterType, string>[] parts = ParameterParser.ParseParameters(parameters);
-
-            // Then
-            CollectionAssert.AreEqual(new[]
-            {
-                new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Socket, "/tmp/xenoatom.sock")
-            }, parts);
-        }
-
-        [TestMethod]
         [DataRow("")]
         [DataRow("  ")]
         [DataRow("123;foo;baz")]
@@ -90,6 +73,7 @@ namespace MsBuildPipeLogger.Logger.Tests
         [DataRow("foo=bar")]
         [DataRow("123;name=bar")]
         [DataRow("server=foo")]
+        [DataRow("socket=/tmp/foo")]
         [DataRow("socket=/tmp/foo;name=bar")]
         public void ThrowsForInvalidParameters(string parameters)
         {

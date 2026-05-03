@@ -9,13 +9,12 @@ There are two packages:
 
 ## Transports
 
-The logger currently supports:
+The `netstandard2.0` logger assembly currently supports:
 
 - Anonymous pipes: pass the server's client handle as the logger parameter.
 - Named pipes: pass `name=<pipeName>` and optionally `server=<serverName>`.
-- Unix domain sockets: pass `socket=<socketPath>` when using the modern `net8.0` package target.
 
-The Unix domain socket API is not available from the `netstandard2.0` target; use the `net8.0` assets when selecting that transport.
+Unix domain sockets are not exposed because the logger package must remain a single `netstandard2.0` assembly and the required socket endpoint API is not available there without reflection-based workarounds.
 
 ## Anonymous pipe example
 
@@ -45,21 +44,6 @@ string loggerParameter = "name=build-events";
 server.ReadAll();
 ```
 
-## Unix domain socket example
-
-```csharp
-using MsBuildPipeLogger;
-
-string socketPath = Path.Combine(Path.GetTempPath(), $"msbuild-{Guid.NewGuid():N}.sock");
-using var server = new UnixDomainSocketLoggerServer(socketPath);
-server.AnyEventRaised += (_, e) => Console.WriteLine(e.Message);
-
-string loggerParameter = $"socket={socketPath}";
-// Pass loggerParameter to MSBuild as the logger parameters value.
-
-server.ReadAll();
-```
-
 ## Logger parameters
 
 The logger accepts a small semicolon-separated parameter set:
@@ -67,6 +51,5 @@ The logger accepts a small semicolon-separated parameter set:
 - `<handle>` or `handle=<handle>`: connect to an anonymous pipe client handle.
 - `name=<pipeName>`: connect to a local named pipe.
 - `name=<pipeName>;server=<serverName>`: connect to a named pipe on a specific server.
-- `socket=<socketPath>`: connect to a Unix domain socket (`net8.0` package target only).
 
 `Read()` blocks until an event is available, the transport closes, or cancellation/disposal unblocks the server. `ReadAll()` keeps dispatching events until the stream ends or a `BuildFinishedEventArgs` is received.

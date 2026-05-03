@@ -8,7 +8,7 @@ A pair of MSBuild logger/server packages that stream MSBuild event data to anoth
 
 - `XenoAtom.MsBuildPipeLogger.Logger`: an MSBuild logger that serializes build events using MSBuild's binary log event format.
 - `XenoAtom.MsBuildPipeLogger.Server`: a receiver that deserializes events and dispatches the normal MSBuild logging callbacks.
-- Supports anonymous pipes, named pipes, and Unix domain sockets on the modern `net8.0` package target.
+- Supports anonymous pipes and named pipes from a `netstandard2.0` logger assembly.
 - Nullable-enabled projects with package metadata/readme/icon configured for the two publishable packages.
 
 ## 📦 Packages

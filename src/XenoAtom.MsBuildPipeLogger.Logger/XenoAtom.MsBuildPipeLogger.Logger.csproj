@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>XenoAtom.MsBuildPipeLogger</RootNamespace>
     <IsPackable>true</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -22,8 +22,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="System.IO.Pipes" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
-    <PackageReference Include="System.Threading.Thread" Condition="'$(TargetFramework)' == 'netstandard2.0'" />
+    <PackageReference Include="System.IO.Pipes" />
+    <PackageReference Include="System.Threading.Thread" />
   </ItemGroup>
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
