@@ -22,6 +22,8 @@ dotnet add package XenoAtom.MsBuildPipeLogger
 
 The package copies `XenoAtom.MsBuildPipeLogger.Logger.dll` to an isolated `XenoAtom.MsBuildPipeLogger` output subfolder so MSBuild does not probe unrelated application assemblies from the logger directory.
 
+If your host process references `Microsoft.Build` assemblies directly, use `Microsoft.Build.Locator` and mark direct `Microsoft.Build*` package references with `ExcludeAssets="runtime"` so MSBuild is loaded from the installed .NET SDK. See the user guide for details.
+
 ## 📖 User Guide
 
 For more details on how to use XenoAtom.MsBuildPipeLogger, please visit the [user guide](https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger/blob/main/doc/readme.md).
