@@ -1,4 +1,4 @@
-# XenoAtom.MsBuildPipeLogger [![ci](https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger/actions/workflows/ci.yml/badge.svg)](https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger/actions/workflows/ci.yml)
+# XenoAtom.MsBuildPipeLogger [![ci](https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger/actions/workflows/ci.yml/badge.svg)](https://github.com/XenoAtom/XenoAtom.MsBuildPipeLogger/actions/workflows/ci.yml)  [![NuGet](https://img.shields.io/nuget/v/XenoAtom.MsBuildPipeLogger.svg)](https://www.nuget.org/packages/XenoAtom.MsBuildPipeLogger/)
 
 <img align="right" width="160px" height="160px" src="https://raw.githubusercontent.com/XenoAtom/XenoAtom.MsBuildPipeLogger/main/img/XenoAtom.MsBuildPipeLogger.png">
 
