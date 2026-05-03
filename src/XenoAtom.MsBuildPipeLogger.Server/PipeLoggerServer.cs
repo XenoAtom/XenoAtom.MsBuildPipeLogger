@@ -223,9 +223,12 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
             _readerThread.Join(ReaderShutdownTimeout);
         }
 
-        _buildEventArgsReader.Dispose();
-        _binaryReader.Dispose();
-        Buffer.Dispose();
+        lock (_readLock)
+        {
+            _buildEventArgsReader.Dispose();
+            _binaryReader.Dispose();
+            Buffer.Dispose();
+        }
     }
 
     private void DisposePipeStream()

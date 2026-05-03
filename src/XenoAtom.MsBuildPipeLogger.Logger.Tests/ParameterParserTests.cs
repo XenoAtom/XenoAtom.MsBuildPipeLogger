@@ -7,7 +7,7 @@ using Microsoft.Build.Framework;
 namespace XenoAtom.MsBuildPipeLogger.Logger.Tests;
 
 [TestClass]
-public class ParameterParserFixture
+public class ParameterParserTests
 {
     [TestMethod]
     [DataRow("1234")]
@@ -18,12 +18,10 @@ public class ParameterParserFixture
     [DataRow("\"1234\"")]
     [DataRow("\"handle=1234\"")]
     [DataRow("\" handle = 1234 \"")]
-    public void GetsAnonymousPipe(string parameters)
+    public void ParseParameters_WithAnonymousPipeHandle_ReturnsHandleSegment(string parameters)
     {
-        // Given, When
         var parts = ParameterParser.ParseParameters(parameters);
 
-        // Then
         CollectionAssert.AreEqual(new[]
         {
             new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Handle, "1234")
@@ -35,12 +33,10 @@ public class ParameterParserFixture
     [DataRow("\"name=Foo\"")]
     [DataRow("NAME=Foo")]
     [DataRow(" name = Foo ")]
-    public void GetsNamedPipe(string parameters)
+    public void ParseParameters_WithNamedPipe_ReturnsNameSegment(string parameters)
     {
-        // Given, When
         var parts = ParameterParser.ParseParameters(parameters);
 
-        // Then
         CollectionAssert.AreEqual(new[]
         {
             new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Name, "Foo")
@@ -52,16 +48,40 @@ public class ParameterParserFixture
     [DataRow("\"name=Foo;server=Bar\"")]
     [DataRow("NAME=Foo;SERVER=Bar")]
     [DataRow(" name = Foo ; server = Bar")]
-    public void GetsNamedPipeWithServer(string parameters)
+    public void ParseParameters_WithNamedPipeAndServer_ReturnsNameAndServerSegments(string parameters)
     {
-        // Given, When
         var parts = ParameterParser.ParseParameters(parameters);
 
-        // Then
         CollectionAssert.AreEqual(new[]
         {
             new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Name, "Foo"),
             new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Server, "Bar")
+        }, parts);
+    }
+
+    [TestMethod]
+    [DataRow("server=Bar;name=Foo")]
+    [DataRow("SERVER=Bar;NAME=Foo")]
+    [DataRow(" server = Bar ; name = Foo")]
+    public void ParseParameters_WithServerThenNamedPipe_ReturnsServerAndNameSegments(string parameters)
+    {
+        var parts = ParameterParser.ParseParameters(parameters);
+
+        CollectionAssert.AreEqual(new[]
+        {
+            new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Server, "Bar"),
+            new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Name, "Foo")
+        }, parts);
+    }
+
+    [TestMethod]
+    public void ParseParameters_WithEqualsInValue_PreservesValue()
+    {
+        var parts = ParameterParser.ParseParameters("name=Foo=Bar");
+
+        CollectionAssert.AreEqual(new[]
+        {
+            new KeyValuePair<ParameterParser.ParameterType, string>(ParameterParser.ParameterType.Name, "Foo=Bar")
         }, parts);
     }
 
@@ -74,11 +94,12 @@ public class ParameterParserFixture
     [DataRow("foo=bar")]
     [DataRow("123;name=bar")]
     [DataRow("server=foo")]
+    [DataRow("name=")]
+    [DataRow("server=foo;name=")]
     [DataRow("socket=/tmp/foo")]
     [DataRow("socket=/tmp/foo;name=bar")]
-    public void ThrowsForInvalidParameters(string parameters)
+    public void GetPipeFromParameters_WithInvalidParameters_ThrowsLoggerException(string parameters)
     {
-        // Given, When, Then
         Assert.Throws<LoggerException>(() => ParameterParser.GetPipeFromParameters(parameters));
     }
 }

@@ -12,14 +12,20 @@ internal class Program
     {
         Console.WriteLine(string.Join("; ", args));
         var messages = int.Parse(args[1]);
+        var includeBuildFinished = args.Length > 2 && bool.Parse(args[2]);
         try
         {
             using (var writer = ParameterParser.GetPipeFromParameters(args[0]))
             {
-                writer.Write(new BuildStartedEventArgs($"Testing", "help"));
+                writer.Write(new BuildStartedEventArgs("Testing", "help"));
                 for (var c = 0; c < messages; c++)
                 {
                     writer.Write(new BuildMessageEventArgs($"Testing {c}", "help", "sender", MessageImportance.Normal));
+                }
+
+                if (includeBuildFinished)
+                {
+                    writer.Write(new BuildFinishedEventArgs("Finished", "help", true));
                 }
             }
         }
