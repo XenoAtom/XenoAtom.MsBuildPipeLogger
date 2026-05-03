@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>XenoAtom.MsBuildPipeLogger</RootNamespace>
     <IsPackable>true</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Description>Server library that receives MSBuild logger event data from XenoAtom.MsBuildPipeLogger.Logger over pipes.</Description>

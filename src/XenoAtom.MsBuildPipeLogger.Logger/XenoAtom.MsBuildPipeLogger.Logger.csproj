@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <RootNamespace>XenoAtom.MsBuildPipeLogger</RootNamespace>
     <IsPackable>true</IsPackable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Description>MSBuild logger that streams build event data to XenoAtom.MsBuildPipeLogger.Server over pipes.</Description>

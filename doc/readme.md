@@ -19,7 +19,7 @@ Unix domain sockets are not exposed because the logger package must remain a sin
 ## Anonymous pipe example
 
 ```csharp
-using MsBuildPipeLogger;
+using XenoAtom.MsBuildPipeLogger;
 
 using var server = new AnonymousPipeLoggerServer();
 server.AnyEventRaised += (_, e) => Console.WriteLine(e.Message);
@@ -33,7 +33,7 @@ server.ReadAll();
 ## Named pipe example
 
 ```csharp
-using MsBuildPipeLogger;
+using XenoAtom.MsBuildPipeLogger;
 
 using var server = new NamedPipeLoggerServer("build-events");
 server.AnyEventRaised += (_, e) => Console.WriteLine(e.Message);
