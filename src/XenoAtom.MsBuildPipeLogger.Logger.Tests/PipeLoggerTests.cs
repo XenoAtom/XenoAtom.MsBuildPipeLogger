@@ -54,6 +54,17 @@ public class PipeLoggerTests
     }
 
     [TestMethod]
+    public void EventForwarding_WhenPipeWriterThrows_DoesNotThrow()
+    {
+        var eventSource = new TestEventSource();
+        var logger = new ThrowingPipeLogger();
+
+        logger.Initialize(eventSource);
+        eventSource.RaiseAnyEvent(new BuildMessageEventArgs("message", null, null, MessageImportance.Normal));
+        logger.Shutdown();
+    }
+
+    [TestMethod]
     public void Initialize_SetsMsBuildEnvironmentVariables()
     {
         var oldTargetOutputLogging = Environment.GetEnvironmentVariable("MSBUILDTARGETOUTPUTLOGGING");
@@ -95,6 +106,23 @@ public class PipeLoggerTests
         public void Dispose()
         {
             IsDisposed = true;
+        }
+    }
+
+    private sealed class ThrowingPipeLogger : PipeLogger
+    {
+        protected override IPipeWriter InitializePipeWriter() => new ThrowingPipeWriter();
+    }
+
+    private sealed class ThrowingPipeWriter : IPipeWriter
+    {
+        public void Write(BuildEventArgs e)
+        {
+            throw new InvalidOperationException("The writer failed.");
+        }
+
+        public void Dispose()
+        {
         }
     }
 

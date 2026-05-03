@@ -83,6 +83,13 @@ public class PipeLogger : Logger
 
     private void OnAnyEventRaised(object sender, BuildEventArgs e)
     {
-        Pipe?.Write(e);
+        try
+        {
+            Pipe?.Write(e);
+        }
+        catch (Exception)
+        {
+            // Logging failures must not tear down the build that is being observed.
+        }
     }
 }
