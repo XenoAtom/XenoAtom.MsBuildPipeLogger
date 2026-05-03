@@ -94,7 +94,7 @@ namespace MsBuildPipeLogger
 
         public override void Write(byte[] buffer, int offset, int count)
         {
-            ValidateBufferArguments(buffer, offset, count);
+            ValidateReadWriteArguments(buffer, offset, count);
             try
             {
                 _queue.Add(new Buffer(buffer, offset, count));
@@ -109,7 +109,7 @@ namespace MsBuildPipeLogger
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            ValidateBufferArguments(buffer, offset, count);
+            ValidateReadWriteArguments(buffer, offset, count);
 
             int read = 0;
             while (read < count)
@@ -149,7 +149,7 @@ namespace MsBuildPipeLogger
             base.Dispose(disposing);
         }
 
-        private static void ValidateBufferArguments(byte[] buffer, int offset, int count)
+        private static void ValidateReadWriteArguments(byte[] buffer, int offset, int count)
         {
             if (buffer is null)
             {

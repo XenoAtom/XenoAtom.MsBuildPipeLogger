@@ -147,7 +147,15 @@ namespace MsBuildPipeLogger
 
         private void DrainPipe()
         {
-            if (_stream is not PipeStream pipeStream || !IsWindows)
+            if (_stream is not PipeStream pipeStream)
+            {
+                return;
+            }
+#if NET5_0_OR_GREATER
+            if (!OperatingSystem.IsWindows())
+#else
+            if (!IsWindows)
+#endif
             {
                 return;
             }

@@ -21,7 +21,7 @@ namespace MsBuildPipeLogger
             }
 
             Type buildEventArgsWriter = GetBuildEventArgsWriterType();
-            ConstructorInfo writerConstructor = buildEventArgsWriter.GetConstructor(
+            ConstructorInfo? writerConstructor = buildEventArgsWriter.GetConstructor(
                 InstanceMemberFlags,
                 null,
                 new[] { typeof(BinaryWriter) },
@@ -31,9 +31,10 @@ namespace MsBuildPipeLogger
                 throw new MissingMethodException(BuildEventArgsWriterTypeName, ".ctor(System.IO.BinaryWriter)");
             }
 
-            object argsWriter = writerConstructor.Invoke(new object[] { writer });
+            object argsWriter = writerConstructor.Invoke(new object[] { writer })
+                ?? throw new InvalidOperationException($"Could not create an instance of '{BuildEventArgsWriterTypeName}'.");
 
-            MethodInfo writeMethod = buildEventArgsWriter.GetMethod(
+            MethodInfo? writeMethod = buildEventArgsWriter.GetMethod(
                 "Write",
                 InstanceMemberFlags,
                 null,
@@ -54,7 +55,7 @@ namespace MsBuildPipeLogger
         private static Type GetBuildEventArgsWriterType()
         {
             Assembly msBuildAssembly = typeof(BinaryLogger).GetTypeInfo().Assembly;
-            Type buildEventArgsWriter = msBuildAssembly.GetType(BuildEventArgsWriterTypeName);
+            Type? buildEventArgsWriter = msBuildAssembly.GetType(BuildEventArgsWriterTypeName);
             if (buildEventArgsWriter == null)
             {
                 throw new TypeLoadException(
