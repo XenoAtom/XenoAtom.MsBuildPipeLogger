@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 // See license.txt file in the project root for full license information.
 
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using Microsoft.Build.Framework;
@@ -99,6 +100,28 @@ public class PipeLoggerServerCancellationTests
         Assert.IsNull(buildEvent);
     }
 
+    [TestMethod]
+    public void Cancel_DoesNotSynchronouslyWaitForTransportDispose()
+    {
+        using var tokenSource = new CancellationTokenSource();
+        var pipeStream = new BlockingDisposePipeStream();
+        using var server = new BlockingDisposeServer(pipeStream, tokenSource.Token);
+
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            tokenSource.Cancel();
+            stopwatch.Stop();
+
+            Assert.IsTrue(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"Cancel took {stopwatch.Elapsed}.");
+            Assert.IsTrue(pipeStream.DisposeStarted.Wait(TestTimeout), "The pipe stream dispose was not requested.");
+        }
+        finally
+        {
+            pipeStream.AllowDispose.Set();
+        }
+    }
+
     private static async Task<BuildEventArgs?> ReadWithCancellationAsync(Func<CancellationToken, IPipeLoggerServer> createServer)
     {
         using var tokenSource = new CancellationTokenSource();
@@ -127,6 +150,50 @@ public class PipeLoggerServerCancellationTests
             }
 
             throw new SocketException(UnixOperationCanceledErrorCode);
+        }
+    }
+
+    private sealed class BlockingDisposeServer : PipeLoggerServer<BlockingDisposePipeStream>
+    {
+        public BlockingDisposeServer(BlockingDisposePipeStream pipeStream, CancellationToken cancellationToken)
+            : base(pipeStream, cancellationToken, false)
+        {
+            StartReading();
+        }
+
+        protected override void Connect()
+        {
+            while (!CancellationToken.IsCancellationRequested)
+            {
+                Thread.Sleep(1);
+            }
+
+            throw new OperationCanceledException(CancellationToken);
+        }
+    }
+
+    private sealed class BlockingDisposePipeStream : PipeStream
+    {
+        public BlockingDisposePipeStream()
+            : base(PipeDirection.In, 0)
+        {
+        }
+
+        public ManualResetEventSlim DisposeStarted { get; } = new(false);
+
+        public ManualResetEventSlim AllowDispose { get; } = new(false);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                DisposeStarted.Set();
+                AllowDispose.Wait(TestTimeout);
+                DisposeStarted.Dispose();
+                AllowDispose.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 }

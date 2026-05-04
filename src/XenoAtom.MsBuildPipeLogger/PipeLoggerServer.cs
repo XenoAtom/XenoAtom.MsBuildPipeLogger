@@ -26,6 +26,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
     private readonly object _readLock = new();
     private readonly Thread _readerThread;
     private int _disposed;
+    private int _pipeShutdownRequested;
     private int _started;
 
     internal PipeBuffer Buffer { get; } = new();
@@ -76,7 +77,8 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         CancellationToken = cancellationToken;
         if (cancellationToken.CanBeCanceled)
         {
-            _cancellationRegistration = cancellationToken.Register(DisposePipeStream);
+            _cancellationRegistration = cancellationToken.Register(static state =>
+                ((PipeLoggerServer<TPipeStream>)state!).RequestPipeShutdown(), this);
         }
 
         _readerThread = new Thread(ReadFromTransport)
@@ -220,8 +222,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         }
 
         _cancellationRegistration.Dispose();
-        DisposePipeStream();
-        Buffer.CompleteAdding();
+        RequestPipeShutdown();
 
         if (Volatile.Read(ref _started) != 0 && Thread.CurrentThread.ManagedThreadId != _readerThread.ManagedThreadId)
         {
@@ -236,6 +237,27 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         }
     }
 
+    private void RequestPipeShutdown()
+    {
+        // Unblock readers immediately. Disposing PipeStream can block on some Unix pipe/socket
+        // states, and CancellationToken.Cancel() runs callbacks synchronously, so the transport
+        // dispose is intentionally moved to a dedicated background thread.
+        Buffer.TryWriteEndOfFile();
+        Buffer.CompleteAdding();
+
+        if (Interlocked.Exchange(ref _pipeShutdownRequested, 1) != 0)
+        {
+            return;
+        }
+
+        var pipeDisposeThread = new Thread(DisposePipeStream)
+        {
+            IsBackground = true,
+            Name = "MSBuild pipe logger transport disposer"
+        };
+        pipeDisposeThread.Start();
+    }
+
     private void DisposePipeStream()
     {
         try
@@ -243,6 +265,15 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
             PipeStream.Dispose();
         }
         catch (ObjectDisposedException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (SocketException)
+        {
+        }
+        catch (InvalidOperationException)
         {
         }
     }
