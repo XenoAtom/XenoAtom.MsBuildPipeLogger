@@ -13,6 +13,13 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </summary>
 internal static class WireIO
 {
+    /// <summary>
+    /// Upper bound for any length prefix read from the pipe (records and base headers). Generous —
+    /// real records are far smaller — but prevents a corrupt or hostile stream from triggering a
+    /// near-2 GiB allocation. 128 MiB.
+    /// </summary>
+    public const int MaxFrameLength = 128 * 1024 * 1024;
+
     /// <summary>Writes a non-negative integer using a 7-bit variable-length encoding.</summary>
     public static void Write7Bit(this BinaryWriter writer, int value)
     {
@@ -30,17 +37,21 @@ internal static class WireIO
     public static int Read7Bit(this BinaryReader reader)
     {
         var result = 0;
-        var shift = 0;
-        while (shift < 35)
+        for (var shift = 0; shift < 35; shift += 7)
         {
             var b = reader.ReadByte();
+            if (shift == 28 && (b & 0xF0) != 0)
+            {
+                // The 5th byte can only carry bits 28..31: a continuation bit or any bit beyond
+                // bit 31 cannot come from Write7Bit and would silently produce a garbage value.
+                break;
+            }
+
             result |= (b & 0x7F) << shift;
             if ((b & 0x80) == 0)
             {
                 return result;
             }
-
-            shift += 7;
         }
 
         throw new FormatException("Malformed 7-bit encoded integer on the pipe stream.");

@@ -13,6 +13,10 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </summary>
 internal sealed class PipeEventReader : IDisposable
 {
+    // Generous upper bound for a single record payload (and, via WireIO, for a base header): a
+    // corrupt or hostile length prefix must fail cleanly instead of triggering a huge allocation.
+    private const int MaxRecordLength = WireIO.MaxFrameLength;
+
     private readonly BinaryReader _reader;
 
     public PipeEventReader(Stream stream) => _reader = new BinaryReader(stream);
@@ -35,6 +39,11 @@ internal sealed class PipeEventReader : IDisposable
         }
 
         var length = _reader.Read7Bit();
+        if (length < 0 || length > MaxRecordLength)
+        {
+            throw new InvalidDataException($"Record length {length} is negative or exceeds the {MaxRecordLength} byte limit.");
+        }
+
         var payload = _reader.ReadBytes(length);
         if (payload.Length < length)
         {
@@ -46,14 +55,20 @@ internal sealed class PipeEventReader : IDisposable
         using var reader = new BinaryReader(memory);
         try
         {
-            var b = WireBaseFields.Read(reader);
+            var b = WireBaseFields.ReadFramed(reader);
             return Materialize(kind, b, reader);
         }
-        catch (EndOfStreamException)
+        catch (IOException)
         {
-            // A record we cannot fully parse (e.g. a future record kind with a layout this reader does
-            // not understand). The length prefix already advanced the underlying stream to the next
+            // A record we cannot fully parse (e.g. truncated, or bytes that decode to an invalid
+            // string length — BinaryReader.ReadString throws IOException; EndOfStreamException is an
+            // IOException too). The length prefix already advanced the underlying stream to the next
             // record, so surface a placeholder and keep reading rather than aborting the whole stream.
+            return new PipeCustomBuildEventArgs();
+        }
+        catch (FormatException)
+        {
+            // A malformed varint inside the payload (WireIO.Read7Bit). Same recovery as above.
             return new PipeCustomBuildEventArgs();
         }
     }
@@ -146,8 +161,11 @@ internal sealed class PipeEventReader : IDisposable
 
         PipeRecordKind.TaskParameter => ApplyBase(ReadTaskParameter(r), b),
 
-        // Unknown or Custom: the payload beyond the base fields is intentionally ignored.
-        _ => ApplyBase(new PipeCustomBuildEventArgs { EventType = ReadOptionalTypeName(r) }, b),
+        // An event the writer had no dedicated kind for: the payload carries the originating type name.
+        PipeRecordKind.Custom => ApplyBase(new PipeCustomBuildEventArgs { EventType = ReadOptionalTypeName(r) }, b),
+
+        // Unknown/future record kind: the payload layout is unknown to this reader, so ignore it entirely.
+        _ => ApplyBase(new PipeCustomBuildEventArgs(), b),
     };
 
     private static PipeTaskParameterEventArgs ReadTaskParameter(BinaryReader r)

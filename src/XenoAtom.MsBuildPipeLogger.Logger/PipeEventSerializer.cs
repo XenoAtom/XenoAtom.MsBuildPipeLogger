@@ -17,8 +17,14 @@ internal sealed class PipeEventSerializer
 {
     private readonly MemoryStream _scratch = new();
     private readonly BinaryWriter _scratchWriter;
+    private readonly MemoryStream _baseScratch = new();
+    private readonly BinaryWriter _baseScratchWriter;
 
-    public PipeEventSerializer() => _scratchWriter = new BinaryWriter(_scratch);
+    public PipeEventSerializer()
+    {
+        _scratchWriter = new BinaryWriter(_scratch);
+        _baseScratchWriter = new BinaryWriter(_baseScratch);
+    }
 
     public void Write(BinaryWriter output, BuildEventArgs e)
     {
@@ -55,7 +61,7 @@ internal sealed class PipeEventSerializer
         _ => PipeRecordKind.Custom,
     };
 
-    private static void WriteBase(BinaryWriter w, BuildEventArgs e)
+    private void WriteBase(BinaryWriter w, BuildEventArgs e)
     {
         var fields = new WireBaseFields
         {
@@ -79,7 +85,10 @@ internal sealed class PipeEventSerializer
             fields.TaskId = context.TaskId;
         }
 
-        fields.Write(w);
+        // The base fields are framed with their own length prefix (measured via a reusable scratch
+        // buffer) so a reader can always find the event-specific fields that follow, even when the
+        // two sides disagree on how many base fields exist.
+        fields.WriteFramed(w, _baseScratch, _baseScratchWriter);
     }
 
     private static void WriteSpecific(BinaryWriter w, PipeRecordKind kind, BuildEventArgs e)
