@@ -15,40 +15,29 @@ The package contains:
 
 The logger assembly is intentionally isolated in its own output folder. MSBuild task/logger loading can probe assemblies from the logger directory, so the package keeps unrelated host-process assemblies out of that folder.
 
-## Using Microsoft.Build APIs in the host process
+## Local event model — no Microsoft.Build required
 
-`XenoAtom.MsBuildPipeLogger` dispatches normal MSBuild `BuildEventArgs` types. If your host application also references `Microsoft.Build` assemblies or uses MSBuild APIs directly, load those assemblies through [Microsoft.Build.Locator](https://www.nuget.org/packages/Microsoft.Build.Locator) before touching any `Microsoft.Build` type. This keeps your process aligned with the MSBuild instance installed with the .NET SDK.
+The receiver deserializes events into XenoAtom's own `PipeBuildEventArgs` types (`PipeBuildStartedEventArgs`, `PipeProjectStartedEventArgs`, `PipeProjectEvaluationFinishedEventArgs`, `PipeBuildMessageEventArgs`, `PipeTaskCommandLineEventArgs`, `PipeBuildErrorEventArgs`, and so on). It does **not** reference any `Microsoft.Build` assembly.
 
-Reference MSBuild packages for compile-time only, keep `Microsoft.Build.Locator` as a runtime dependency, and avoid copying `Microsoft.Build*.dll` to your output folder:
+Because the wire format is XenoAtom's own — not the MSBuild binary-log format — the receiver is independent of the MSBuild version that produced the build. There is **no need for `Microsoft.Build.Locator`, no exact version to match, and nothing to keep out of your output folder**:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Microsoft.Build" Version="18.4.0" ExcludeAssets="runtime" />
-  <PackageReference Include="Microsoft.Build.Utilities.Core" Version="18.4.0" ExcludeAssets="runtime" />
-  <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
   <PackageReference Include="XenoAtom.MsBuildPipeLogger" Version="..." />
 </ItemGroup>
 ```
 
-Call `MSBuildLocator.RegisterDefaults()` from startup code that does not directly reference MSBuild types, then call the code that creates `NamedPipeLoggerServer`, reads `BuildEventArgs`, or otherwise uses MSBuild:
-
 ```csharp
-using Microsoft.Build.Locator;
-
-static int Main(string[] args)
-{
-    MSBuildLocator.RegisterDefaults();
-    return Run(args);
-}
-
-static int Run(string[] args)
-{
-    // Safe to use XenoAtom.MsBuildPipeLogger and Microsoft.Build types here.
-    return 0;
-}
+using var server = new NamedPipeLoggerServer("my-pipe");
+server.MessageRaised += m => Console.WriteLine(m.Message);
+server.ReadAll();
 ```
 
-The bundled logger assembly is loaded by MSBuild itself from the isolated `XenoAtom.MsBuildPipeLogger/` subfolder; the locator setup only applies to your host process.
+The bundled logger assembly is loaded by MSBuild itself (in the process running the build) from the isolated `XenoAtom.MsBuildPipeLogger/` subfolder, where it reads MSBuild's real `BuildEventArgs` through the public API and serializes them into the wire format. Only the logger side touches `Microsoft.Build`, and it uses whatever MSBuild is already loaded in the build process.
+
+If your host application uses `Microsoft.Build` APIs for its *own* reasons (unrelated to receiving pipe events), that remains your concern and the usual [Microsoft.Build.Locator](https://www.nuget.org/packages/Microsoft.Build.Locator) guidance applies — but XenoAtom.MsBuildPipeLogger itself no longer requires it.
+
+Because the receiver has no `Microsoft.Build` dependency and uses no reflection, it is safe to consume from a [Native AOT](https://learn.microsoft.com/dotnet/core/deploying/native-aot/) host. The `XenoAtom.MsBuildPipeLogger.NativeAotSample` project under `src/` publishes a native binary that spawns `dotnet msbuild` and receives events over a pipe end to end; `Microsoft.Build.Locator` is not used and would not work under AOT anyway, since the host never loads MSBuild into its own process.
 
 ## Transports
 
@@ -69,7 +58,7 @@ using XenoAtom.MsBuildPipeLogger;
 
 var pipeName = $"build-events-{Guid.NewGuid():N}";
 using var server = new NamedPipeLoggerServer(pipeName);
-server.AnyEventRaised += (_, e) => Console.WriteLine(e.Message);
+server.AnyEventRaised += e => Console.WriteLine(e.Message);
 
 using var process = new Process();
 process.StartInfo.FileName = "dotnet";
@@ -96,7 +85,7 @@ using System.Diagnostics;
 using XenoAtom.MsBuildPipeLogger;
 
 using var server = new AnonymousPipeLoggerServer();
-server.AnyEventRaised += (_, e) => Console.WriteLine(e.Message);
+server.AnyEventRaised += e => Console.WriteLine(e.Message);
 
 var loggerSpecification = PipeLoggerServer.GetLoggerSpecification(server.GetClientHandle());
 
@@ -121,7 +110,7 @@ using XenoAtom.MsBuildPipeLogger;
 
 var pipeName = $"build-events-{Guid.NewGuid():N}";
 using var server = new NamedPipeLoggerServer(pipeName);
-server.AnyEventRaised += (_, e) => Console.WriteLine(e.Message);
+server.AnyEventRaised += e => Console.WriteLine(e.Message);
 
 var loggerSpecification = PipeLoggerServer.GetLoggerSpecification($"name={pipeName}");
 
@@ -146,4 +135,4 @@ The logger accepts a small semicolon-separated parameter set:
 - `name=<pipeName>`: connect to a local named pipe.
 - `name=<pipeName>;server=<serverName>`: connect to a named pipe on a specific server.
 
-`Read()` blocks until an event is available, the transport closes, or cancellation/disposal unblocks the server. `ReadAll()` keeps dispatching events until the stream ends or a `BuildFinishedEventArgs` is received.
+`Read()` returns the next `PipeBuildEventArgs` and blocks until an event is available, the transport closes, or cancellation/disposal unblocks the server. `ReadAll()` keeps dispatching events until the stream ends or a `PipeBuildFinishedEventArgs` is received.

@@ -5,7 +5,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Build.Framework;
-using Microsoft.Build.Logging;
 
 namespace XenoAtom.MsBuildPipeLogger.Tests;
 
@@ -62,9 +61,9 @@ public class PipeTransportEndToEndTests
         var messageCount = 0;
         var buildFinishedCount = 0;
         using var server = new NamedPipeLoggerServer(pipeName);
-        server.BuildStarted += (_, _) => buildStartedCount++;
-        server.MessageRaised += (_, _) => messageCount++;
-        server.BuildFinished += (_, _) => buildFinishedCount++;
+        server.BuildStarted += _ => buildStartedCount++;
+        server.MessageRaised += _ => messageCount++;
+        server.BuildFinished += _ => buildFinishedCount++;
         var readTask = Task.Run(server.ReadAll);
 
         using (var writer = ParameterParser.GetPipeFromParameters($"name={pipeName}"))
@@ -139,10 +138,10 @@ public class PipeTransportEndToEndTests
 
     private static string CreatePipeName() => $"xenoatom-msbuild-{Guid.NewGuid():N}";
 
-    private static List<BuildEventArgs> SubscribeAnyEvents(EventArgsDispatcher server)
+    private static List<PipeBuildEventArgs> SubscribeAnyEvents(PipeEventDispatcher server)
     {
-        var events = new List<BuildEventArgs>();
-        server.AnyEventRaised += (_, e) => events.Add(e);
+        var events = new List<PipeBuildEventArgs>();
+        server.AnyEventRaised += e => events.Add(e);
         return events;
     }
 

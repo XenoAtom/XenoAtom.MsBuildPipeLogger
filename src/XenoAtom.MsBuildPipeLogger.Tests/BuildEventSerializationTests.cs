@@ -2,9 +2,8 @@
 // Licensed under the MIT license.
 // See license.txt file in the project root for full license information.
 
-using System.Reflection;
+using System.IO;
 using Microsoft.Build.Framework;
-using Microsoft.Build.Logging;
 
 namespace XenoAtom.MsBuildPipeLogger.Tests;
 
@@ -15,62 +14,85 @@ public class BuildEventSerializationTests
     [DataRow(0)]
     [DataRow(1)]
     [DataRow(100000)]
-    public void BuildEventArgsWriterProxy_RoundTripsBuildMessages(int messageCount)
+    public void RoundTripsBuildMessages(int messageCount)
     {
         using var memory = new MemoryStream();
         using var binaryWriter = new BinaryWriter(memory);
-        var writer = new BuildEventArgsWriterProxy(binaryWriter);
-        using var binaryReader = new BinaryReader(memory);
-        using var reader = new BuildEventArgsReader(binaryReader, GetBinaryLoggerFileFormatVersion());
-        var events = new List<BuildEventArgs>();
+        var serializer = new PipeEventSerializer();
 
-        BuildEventAssertions.WriteEvents(new BuildEventArgsWriterAdapter(writer), messageCount);
+        BuildEventAssertions.WriteEvents(new SerializerPipeWriter(serializer, binaryWriter), messageCount);
         binaryWriter.Flush();
 
         memory.Position = 0;
-        BuildEventArgs? eventArgs;
-        while ((eventArgs = reader.Read()) is not null)
+        var events = new List<PipeBuildEventArgs>();
+        using (var reader = new PipeEventReader(memory))
         {
-            events.Add(eventArgs);
-            if (memory.Position >= memory.Length)
+            PipeBuildEventArgs? eventArgs;
+            while ((eventArgs = reader.Read()) is not null)
             {
-                break;
+                events.Add(eventArgs);
             }
         }
 
         BuildEventAssertions.AssertEvents(events, messageCount);
     }
 
-    private static int GetBinaryLoggerFileFormatVersion()
+    [TestMethod]
+    public void SkipsUnknownRecordKindsAndPreservesFollowingEvents()
     {
-        var fileFormatVersionField = typeof(BinaryLogger).GetField(
-                                         "FileFormatVersion",
-                                         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                                     ?? throw new MissingFieldException(typeof(BinaryLogger).FullName, "FileFormatVersion");
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        var serializer = new PipeEventSerializer();
 
-        var fileFormatVersion = fileFormatVersionField.GetValue(null);
-        if (fileFormatVersion is not int version)
+        // A known event, an unknown/future record kind carrying a payload, then another known event.
+        serializer.Write(binaryWriter, new BuildStartedEventArgs("Testing", "help"));
+        Write7Bit(binaryWriter, 9999); // an unknown record kind
+        Write7Bit(binaryWriter, 3); // payload length
+        binaryWriter.Write(new byte[] { 1, 2, 3 });
+        serializer.Write(binaryWriter, new BuildFinishedEventArgs("Finished", "help", true));
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = new List<PipeBuildEventArgs>();
+        using (var reader = new PipeEventReader(memory))
         {
-            throw new InvalidOperationException(
-                $"Field '{typeof(BinaryLogger).FullName}.FileFormatVersion' must be an integer.");
+            PipeBuildEventArgs? eventArgs;
+            while ((eventArgs = reader.Read()) is not null)
+            {
+                events.Add(eventArgs);
+            }
         }
 
-        return version;
+        Assert.AreEqual(3, events.Count);
+        Assert.IsInstanceOfType(events[0], typeof(PipeBuildStartedEventArgs));
+        Assert.IsInstanceOfType(events[1], typeof(PipeCustomBuildEventArgs));
+        Assert.IsInstanceOfType(events[2], typeof(PipeBuildFinishedEventArgs));
     }
 
-    private sealed class BuildEventArgsWriterAdapter : IPipeWriter
+    private static void Write7Bit(BinaryWriter writer, int value)
     {
-        private readonly BuildEventArgsWriterProxy _writer;
-
-        public BuildEventArgsWriterAdapter(BuildEventArgsWriterProxy writer)
+        var v = (uint)value;
+        while (v >= 0x80)
         {
+            writer.Write((byte)(v | 0x80));
+            v >>= 7;
+        }
+
+        writer.Write((byte)v);
+    }
+
+    private sealed class SerializerPipeWriter : IPipeWriter
+    {
+        private readonly PipeEventSerializer _serializer;
+        private readonly BinaryWriter _writer;
+
+        public SerializerPipeWriter(PipeEventSerializer serializer, BinaryWriter writer)
+        {
+            _serializer = serializer;
             _writer = writer;
         }
 
-        public void Write(BuildEventArgs e)
-        {
-            _writer.Write(e);
-        }
+        public void Write(BuildEventArgs e) => _serializer.Write(_writer, e);
 
         public void Dispose()
         {

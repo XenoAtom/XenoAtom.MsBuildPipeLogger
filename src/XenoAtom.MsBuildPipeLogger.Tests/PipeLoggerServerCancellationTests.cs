@@ -122,7 +122,7 @@ public class PipeLoggerServerCancellationTests
         }
     }
 
-    private static async Task<BuildEventArgs?> ReadWithCancellationAsync(Func<CancellationToken, IPipeLoggerServer> createServer)
+    private static async Task<PipeBuildEventArgs?> ReadWithCancellationAsync(Func<CancellationToken, IPipeLoggerServer> createServer)
     {
         using var tokenSource = new CancellationTokenSource();
         using var server = createServer(tokenSource.Token);

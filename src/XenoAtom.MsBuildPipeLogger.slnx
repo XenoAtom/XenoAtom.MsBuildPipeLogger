@@ -18,6 +18,7 @@
   <Project Path="XenoAtom.MsBuildPipeLogger.Logger/XenoAtom.MsBuildPipeLogger.Logger.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger.Logger.Tests/XenoAtom.MsBuildPipeLogger.Logger.Tests.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger/XenoAtom.MsBuildPipeLogger.csproj" />
+  <Project Path="XenoAtom.MsBuildPipeLogger.NativeAotSample/XenoAtom.MsBuildPipeLogger.NativeAotSample.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger.Tests/XenoAtom.MsBuildPipeLogger.Tests.csproj" />
   <Project Path="XenoAtom.MsBuildPipeLogger.Tests.Client/XenoAtom.MsBuildPipeLogger.Tests.Client.csproj" />
 </Solution>

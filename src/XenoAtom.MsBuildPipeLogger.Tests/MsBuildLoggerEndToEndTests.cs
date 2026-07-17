@@ -4,7 +4,6 @@
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using Microsoft.Build.Framework;
 
 namespace XenoAtom.MsBuildPipeLogger.Tests;
 
@@ -33,8 +32,8 @@ public class MsBuildLoggerEndToEndTests
             "</Project>" + Environment.NewLine);
 
         using var server = new NamedPipeLoggerServer(pipeName);
-        var events = new List<BuildEventArgs>();
-        server.AnyEventRaised += (_, e) => events.Add(e);
+        var events = new List<PipeBuildEventArgs>();
+        server.AnyEventRaised += e => events.Add(e);
         var readTask = Task.Run(server.ReadAll);
         using var process = CreateDotNetMsBuildProcess(projectPath, pipeName);
         var output = new ConcurrentQueue<string>();
@@ -63,10 +62,10 @@ public class MsBuildLoggerEndToEndTests
 
         var processOutput = string.Join(Environment.NewLine, output);
         Assert.AreEqual(0, process.ExitCode, processOutput);
-        Assert.IsTrue(events.OfType<BuildStartedEventArgs>().Any(), "MSBuild should raise a build-started event.");
-        Assert.IsTrue(events.OfType<BuildFinishedEventArgs>().Any(x => x.Succeeded), "MSBuild should raise a successful build-finished event.");
+        Assert.IsTrue(events.OfType<PipeBuildStartedEventArgs>().Any(), "MSBuild should raise a build-started event.");
+        Assert.IsTrue(events.OfType<PipeBuildFinishedEventArgs>().Any(x => x.Succeeded), "MSBuild should raise a successful build-finished event.");
         Assert.IsTrue(
-            events.OfType<BuildMessageEventArgs>().Any(x => x.Message?.Contains(ExpectedMessage, StringComparison.Ordinal) == true),
+            events.OfType<PipeBuildMessageEventArgs>().Any(x => x.Message?.Contains(ExpectedMessage, StringComparison.Ordinal) == true),
             $"MSBuild should stream the expected target message. Output:{Environment.NewLine}{processOutput}");
     }
 
