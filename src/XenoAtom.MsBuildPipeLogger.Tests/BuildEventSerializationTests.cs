@@ -174,6 +174,29 @@ public class BuildEventSerializationTests
     }
 
     [TestMethod]
+    public void RejectsBaseHeaderLengthAboveMaximum()
+    {
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+
+        // A record whose payload declares a base-header length above the 128 MiB cap: hostile input
+        // that must fail the stream cleanly instead of being treated as a skippable bad record.
+        using var payload = new MemoryStream();
+        using var payloadWriter = new BinaryWriter(payload);
+        Write7Bit(payloadWriter, 200 * 1024 * 1024);
+        payloadWriter.Flush();
+
+        Write7Bit(binaryWriter, 2); // PipeRecordKind.BuildFinished
+        Write7Bit(binaryWriter, (int)payload.Length);
+        binaryWriter.Write(payload.ToArray());
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        using var reader = new PipeEventReader(memory);
+        Assert.ThrowsExactly<InvalidDataException>(() => reader.Read());
+    }
+
+    [TestMethod]
     public void RejectsOverflowing7BitEncodedLength()
     {
         using var memory = new MemoryStream();

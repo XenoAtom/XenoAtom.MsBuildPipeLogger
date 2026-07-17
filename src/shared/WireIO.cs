@@ -71,22 +71,10 @@ internal static class WireIO
         }
     }
 
-    /// <summary>Reads a string written by <see cref="WriteNullable(BinaryWriter,string)"/>.</summary>
-    public static string? ReadNullableString(this BinaryReader reader) =>
-        reader.ReadBoolean() ? reader.ReadString() : null;
-
     /// <summary>Writes a <see cref="DateTime"/> preserving its <see cref="DateTimeKind"/>.</summary>
     public static void WriteDateTime(this BinaryWriter writer, DateTime value)
     {
         writer.Write(value.Ticks);
         writer.Write((byte)value.Kind);
-    }
-
-    /// <summary>Reads a <see cref="DateTime"/> written by <see cref="WriteDateTime"/>.</summary>
-    public static DateTime ReadDateTime(this BinaryReader reader)
-    {
-        var ticks = reader.ReadInt64();
-        var kind = (DateTimeKind)reader.ReadByte();
-        return new DateTime(ticks, kind);
     }
 }

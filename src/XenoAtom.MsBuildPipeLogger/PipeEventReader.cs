@@ -17,7 +17,11 @@ internal sealed class PipeEventReader : IDisposable
     // corrupt or hostile length prefix must fail cleanly instead of triggering a huge allocation.
     private const int MaxRecordLength = WireIO.MaxFrameLength;
 
+    private const int InitialPayloadCapacity = 4096;
+
     private readonly BinaryReader _reader;
+    private readonly WireBufferReader _payloadReader = new();
+    private byte[] _payload = Array.Empty<byte>();
 
     public PipeEventReader(Stream stream) => _reader = new BinaryReader(stream);
 
@@ -44,26 +48,24 @@ internal sealed class PipeEventReader : IDisposable
             throw new InvalidDataException($"Record length {length} is negative or exceeds the {MaxRecordLength} byte limit.");
         }
 
-        var payload = _reader.ReadBytes(length);
-        if (payload.Length < length)
+        if (!FillPayload(length))
         {
             // The stream ended part-way through a record.
             return null;
         }
 
-        using var memory = new MemoryStream(payload, writable: false);
-        using var reader = new BinaryReader(memory);
+        _payloadReader.Reset(_payload, length);
         try
         {
-            var b = WireBaseFields.ReadFramed(reader);
-            return Materialize(kind, b, reader);
+            var b = WireBaseFields.ReadFramed(_payloadReader);
+            return Materialize(kind, b, _payloadReader);
         }
         catch (IOException)
         {
             // A record we cannot fully parse (e.g. truncated, or bytes that decode to an invalid
-            // string length — BinaryReader.ReadString throws IOException; EndOfStreamException is an
-            // IOException too). The length prefix already advanced the underlying stream to the next
-            // record, so surface a placeholder and keep reading rather than aborting the whole stream.
+            // string length — WireBufferReader throws EndOfStreamException, an IOException). The
+            // payload was already consumed from the underlying stream, so surface a placeholder and
+            // keep reading rather than aborting the whole stream.
             return new PipeCustomBuildEventArgs();
         }
         catch (FormatException)
@@ -75,7 +77,35 @@ internal sealed class PipeEventReader : IDisposable
 
     public void Dispose() => _reader.Dispose();
 
-    private static PipeBuildEventArgs Materialize(PipeRecordKind kind, WireBaseFields b, BinaryReader r) => kind switch
+    /// <summary>
+    /// Reads the next <paramref name="length"/> payload bytes into the reusable record buffer,
+    /// growing it geometrically so a long-lived reader converges on the largest record it sees
+    /// instead of allocating per record.
+    /// </summary>
+    private bool FillPayload(int length)
+    {
+        if (_payload.Length < length)
+        {
+            var capacity = Math.Max(_payload.Length * 2, InitialPayloadCapacity);
+            _payload = new byte[Math.Min(Math.Max(capacity, length), MaxRecordLength)];
+        }
+
+        var read = 0;
+        while (read < length)
+        {
+            var count = _reader.Read(_payload, read, length - read);
+            if (count <= 0)
+            {
+                return false;
+            }
+
+            read += count;
+        }
+
+        return true;
+    }
+
+    private static PipeBuildEventArgs Materialize(PipeRecordKind kind, WireBaseFields b, WireBufferReader r) => kind switch
     {
         PipeRecordKind.BuildStarted => ApplyBase(new PipeBuildStartedEventArgs { BuildEnvironment = ReadProperties(r) }, b),
         PipeRecordKind.BuildFinished => ApplyBase(new PipeBuildFinishedEventArgs { Succeeded = r.ReadBoolean() }, b),
@@ -168,7 +198,7 @@ internal sealed class PipeEventReader : IDisposable
         _ => ApplyBase(new PipeCustomBuildEventArgs(), b),
     };
 
-    private static PipeTaskParameterEventArgs ReadTaskParameter(BinaryReader r)
+    private static PipeTaskParameterEventArgs ReadTaskParameter(WireBufferReader r)
     {
         var kind = (PipeTaskParameterKind)r.Read7Bit();
         var itemType = r.ReadNullableString();
@@ -180,7 +210,7 @@ internal sealed class PipeEventReader : IDisposable
         };
     }
 
-    private static IReadOnlyList<PipeItem> ReadTaskParameterItems(BinaryReader r, string? itemType)
+    private static IReadOnlyList<PipeItem> ReadTaskParameterItems(WireBufferReader r, string? itemType)
     {
         var count = r.Read7Bit();
         if (count == 0)
@@ -198,7 +228,7 @@ internal sealed class PipeEventReader : IDisposable
         return items;
     }
 
-    private static PipeTaskCommandLineEventArgs ReadTaskCommandLine(BinaryReader r)
+    private static PipeTaskCommandLineEventArgs ReadTaskCommandLine(WireBufferReader r)
     {
         var e = new PipeTaskCommandLineEventArgs
         {
@@ -208,7 +238,7 @@ internal sealed class PipeEventReader : IDisposable
         return ReadMessageFields(e, r);
     }
 
-    private static T ReadMessageFields<T>(T e, BinaryReader r)
+    private static T ReadMessageFields<T>(T e, WireBufferReader r)
         where T : PipeBuildMessageEventArgs
     {
         e.Importance = (PipeMessageImportance)r.Read7Bit();
@@ -223,10 +253,10 @@ internal sealed class PipeEventReader : IDisposable
         return e;
     }
 
-    private static string? ReadOptionalTypeName(BinaryReader r) =>
-        r.BaseStream.Position < r.BaseStream.Length ? r.ReadNullableString() : null;
+    private static string? ReadOptionalTypeName(WireBufferReader r) =>
+        r.HasRemaining ? r.ReadNullableString() : null;
 
-    private static IReadOnlyList<PipeProperty> ReadProperties(BinaryReader r)
+    private static IReadOnlyList<PipeProperty> ReadProperties(WireBufferReader r)
     {
         var count = r.Read7Bit();
         if (count == 0)
@@ -245,7 +275,7 @@ internal sealed class PipeEventReader : IDisposable
         return properties;
     }
 
-    private static IReadOnlyList<PipeItem> ReadItems(BinaryReader r)
+    private static IReadOnlyList<PipeItem> ReadItems(WireBufferReader r)
     {
         var count = r.Read7Bit();
         if (count == 0)

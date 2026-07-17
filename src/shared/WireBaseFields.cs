@@ -50,11 +50,11 @@ internal struct WireBaseFields
 
     /// <summary>
     /// Reads a length-prefixed base header written by <see cref="WriteFramed"/>. The fields are
-    /// parsed from a bounded view over exactly the declared header bytes, so trailing header bytes
-    /// appended by a newer writer are skipped, and a shorter header from an older writer can never
-    /// over-read into the event-specific fields that follow.
+    /// parsed from a bounded window over exactly the declared header bytes (no copy), so trailing
+    /// header bytes appended by a newer writer are skipped, and a shorter header from an older
+    /// writer can never over-read into the event-specific fields that follow.
     /// </summary>
-    public static WireBaseFields ReadFramed(BinaryReader reader)
+    public static WireBaseFields ReadFramed(WireBufferReader reader)
     {
         var length = reader.Read7Bit();
         if (length < 0 || length > WireIO.MaxFrameLength)
@@ -62,15 +62,10 @@ internal struct WireBaseFields
             throw new InvalidDataException($"Base header length {length} is negative or exceeds the {WireIO.MaxFrameLength} byte limit.");
         }
 
-        var bytes = reader.ReadBytes(length);
-        if (bytes.Length < length)
-        {
-            throw new EndOfStreamException("The record payload ended before the declared base header length.");
-        }
-
-        using var memory = new MemoryStream(bytes, writable: false);
-        using var bounded = new BinaryReader(memory);
-        return Read(bounded);
+        var previousEnd = reader.PushLimit(length);
+        var fields = Read(reader);
+        reader.PopLimit(previousEnd);
+        return fields;
     }
 
     public void Write(BinaryWriter writer)
@@ -93,7 +88,7 @@ internal struct WireBaseFields
         }
     }
 
-    public static WireBaseFields Read(BinaryReader reader)
+    public static WireBaseFields Read(WireBufferReader reader)
     {
         var fields = new WireBaseFields
         {
