@@ -23,6 +23,9 @@ internal sealed class WireBufferReader
     /// <summary>Gets a value indicating whether any bytes remain before the current limit.</summary>
     public bool HasRemaining => _position < _end;
 
+    /// <summary>Gets the number of unread bytes before the current limit.</summary>
+    public int Remaining => _end - _position;
+
     /// <summary>Points this reader at the first <paramref name="length"/> bytes of <paramref name="buffer"/>.</summary>
     public void Reset(byte[] buffer, int length)
     {
@@ -89,6 +92,24 @@ internal sealed class WireBufferReader
         }
 
         throw new FormatException("Malformed 7-bit encoded integer on the pipe stream.");
+    }
+
+    /// <summary>
+    /// Reads a 7-bit encoded element count and validates it against the bytes remaining. Every
+    /// serialized element occupies at least one byte, so a negative count or one exceeding
+    /// <see cref="Remaining"/> can only come from corrupt or hostile input and must be rejected
+    /// before it is used to size an allocation.
+    /// </summary>
+    /// <exception cref="EndOfStreamException">The count is negative or exceeds the remaining payload.</exception>
+    public int ReadCount()
+    {
+        var count = Read7Bit();
+        if (count < 0 || count > Remaining)
+        {
+            throw new EndOfStreamException($"Element count {count} is negative or exceeds the {Remaining} bytes remaining in the record.");
+        }
+
+        return count;
     }
 
     /// <summary>Reads a <see cref="DateTime"/> written by <see cref="WireIO.WriteDateTime"/>.</summary>

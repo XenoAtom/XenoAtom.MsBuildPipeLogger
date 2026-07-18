@@ -331,6 +331,58 @@ public class BuildEventSerializationTests
     }
 
     [TestMethod]
+    [DataRow(-1)]
+    [DataRow(int.MaxValue)]
+    public void MalformedNestedCountDegradesToPlaceholderAndKeepsReading(int badCount)
+    {
+        // A nested element count is untrusted input: a tiny record must not be able to request a
+        // huge (or negative) array allocation. Exercise all three list readers — properties
+        // (BuildStarted), items (ProjectEvaluationFinished) and task items (TargetFinished outputs).
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        var serializer = new PipeEventSerializer();
+
+        serializer.Write(binaryWriter, new BuildStartedEventArgs("Testing", "help"));
+
+        // BuildStarted whose BuildEnvironment property count is hostile.
+        WriteRecord(binaryWriter, kind: 1, payloadWriter =>
+        {
+            Write7Bit(payloadWriter, badCount);
+        });
+
+        // ProjectEvaluationFinished whose item count is hostile.
+        WriteRecord(binaryWriter, kind: 6, payloadWriter =>
+        {
+            WriteNullableString(payloadWriter, "Foo.csproj"); // ProjectFile
+            Write7Bit(payloadWriter, 0); // Properties count
+            Write7Bit(payloadWriter, badCount); // Items count
+        });
+
+        // TargetFinished whose TargetOutputs task-item count is hostile.
+        WriteRecord(binaryWriter, kind: 8, payloadWriter =>
+        {
+            WriteNullableString(payloadWriter, "CoreCompile"); // TargetName
+            WriteNullableString(payloadWriter, "Foo.csproj"); // ProjectFile
+            WriteNullableString(payloadWriter, "Microsoft.CSharp.targets"); // TargetFile
+            payloadWriter.Write(true); // Succeeded
+            Write7Bit(payloadWriter, badCount); // TargetOutputs count
+        });
+
+        serializer.Write(binaryWriter, new BuildFinishedEventArgs("Finished", "help", true));
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = ReadAllEvents(memory);
+
+        Assert.AreEqual(5, events.Count);
+        Assert.IsInstanceOfType(events[0], typeof(PipeBuildStartedEventArgs));
+        Assert.IsInstanceOfType(events[1], typeof(PipeCustomBuildEventArgs));
+        Assert.IsInstanceOfType(events[2], typeof(PipeCustomBuildEventArgs));
+        Assert.IsInstanceOfType(events[3], typeof(PipeCustomBuildEventArgs));
+        Assert.IsInstanceOfType(events[4], typeof(PipeBuildFinishedEventArgs));
+    }
+
+    [TestMethod]
     public void RejectsRecordLengthAboveMaximum()
     {
         using var memory = new MemoryStream();
@@ -408,6 +460,23 @@ public class BuildEventSerializationTests
         }
 
         return events;
+    }
+
+    // Hand-crafts a full record: kind, payload length, then a payload holding standard base fields
+    // followed by the event-specific bytes produced by writeEventFields.
+    private static void WriteRecord(BinaryWriter writer, int kind, Action<BinaryWriter> writeEventFields)
+    {
+        var baseFields = BuildBaseFields("crafted record", new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+        using var payload = new MemoryStream();
+        using var payloadWriter = new BinaryWriter(payload);
+        Write7Bit(payloadWriter, baseFields.Length);
+        payloadWriter.Write(baseFields);
+        writeEventFields(payloadWriter);
+        payloadWriter.Flush();
+
+        Write7Bit(writer, kind);
+        Write7Bit(writer, (int)payload.Length);
+        writer.Write(payload.ToArray());
     }
 
     // Writes the base fields exactly as WireBaseFields.Write does (message, null help keyword,
