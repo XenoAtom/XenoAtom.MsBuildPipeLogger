@@ -73,6 +73,14 @@ internal sealed class PipeEventReader : IDisposable
             // A malformed varint inside the payload (WireIO.Read7Bit). Same recovery as above.
             return new PipeCustomBuildEventArgs();
         }
+        catch (ArgumentException)
+        {
+            // Bytes that decode to a value the event types reject, e.g. a corrupt tick count or
+            // DateTimeKind in WireBufferReader.ReadDateTime (ArgumentOutOfRangeException derives from
+            // ArgumentException). Same recovery as above. Note this is distinct from an oversized
+            // length prefix, which is a resource-exhaustion guard and is deliberately left to throw.
+            return new PipeCustomBuildEventArgs();
+        }
     }
 
     public void Dispose() => _reader.Dispose();

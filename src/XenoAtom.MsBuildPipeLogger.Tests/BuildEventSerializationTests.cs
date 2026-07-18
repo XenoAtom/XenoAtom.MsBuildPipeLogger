@@ -254,6 +254,41 @@ public class BuildEventSerializationTests
     }
 
     [TestMethod]
+    public void MalformedDateTimeInBaseHeaderDoesNotAbortTheStream()
+    {
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        var serializer = new PipeEventSerializer();
+
+        serializer.Write(binaryWriter, new BuildStartedEventArgs("Testing", "help"));
+
+        // A Message record whose base header carries an out-of-range DateTimeKind byte: the reader
+        // builds a DateTime from these bytes, which throws ArgumentException. It must degrade to a
+        // placeholder and keep reading rather than aborting the whole stream.
+        var baseFields = BuildBaseFieldsWithRawKind("bad timestamp", new DateTime(2026, 1, 2, 3, 4, 5).Ticks, rawKind: 0x7F);
+        using var payload = new MemoryStream();
+        using var payloadWriter = new BinaryWriter(payload);
+        Write7Bit(payloadWriter, baseFields.Length);
+        payloadWriter.Write(baseFields);
+        payloadWriter.Flush();
+
+        Write7Bit(binaryWriter, 11); // PipeRecordKind.Message
+        Write7Bit(binaryWriter, (int)payload.Length);
+        binaryWriter.Write(payload.ToArray());
+
+        serializer.Write(binaryWriter, new BuildFinishedEventArgs("Finished", "help", true));
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = ReadAllEvents(memory);
+
+        Assert.AreEqual(3, events.Count);
+        Assert.IsInstanceOfType(events[0], typeof(PipeBuildStartedEventArgs));
+        Assert.IsInstanceOfType(events[1], typeof(PipeCustomBuildEventArgs));
+        Assert.IsInstanceOfType(events[2], typeof(PipeBuildFinishedEventArgs));
+    }
+
+    [TestMethod]
     public void RejectsRecordLengthAboveMaximum()
     {
         using var memory = new MemoryStream();
@@ -344,6 +379,23 @@ public class BuildEventSerializationTests
         WriteNullableString(writer, null); // SenderName
         writer.Write(timestamp.Ticks);
         writer.Write((byte)timestamp.Kind);
+        Write7Bit(writer, 0); // ThreadId
+        writer.Write(false); // HasContext
+        writer.Flush();
+        return memory.ToArray();
+    }
+
+    // As BuildBaseFields, but writes an arbitrary raw byte in the DateTimeKind position so a test can
+    // exercise a base header the reader cannot turn into a valid DateTime.
+    private static byte[] BuildBaseFieldsWithRawKind(string message, long ticks, byte rawKind)
+    {
+        using var memory = new MemoryStream();
+        using var writer = new BinaryWriter(memory);
+        WriteNullableString(writer, message); // Message
+        WriteNullableString(writer, null); // HelpKeyword
+        WriteNullableString(writer, null); // SenderName
+        writer.Write(ticks);
+        writer.Write(rawKind); // out-of-range DateTimeKind
         Write7Bit(writer, 0); // ThreadId
         writer.Write(false); // HasContext
         writer.Flush();
