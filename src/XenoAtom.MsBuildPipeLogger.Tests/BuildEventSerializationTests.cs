@@ -113,6 +113,48 @@ public class BuildEventSerializationTests
     }
 
     [TestMethod]
+    public void PipeTargetBuiltReasonMirrorsMsBuildAndRoundTripsEveryValue()
+    {
+        // The pipe enum must reproduce Microsoft.Build.Framework.TargetBuiltReason member for
+        // member: the serializer writes the MSBuild value as a raw integer, so any divergence
+        // mislabels or loses the reason on the wire.
+        CollectionAssert.AreEqual(
+            Enum.GetNames(typeof(TargetBuiltReason)),
+            Enum.GetNames(typeof(PipeTargetBuiltReason)));
+
+        var reasons = (TargetBuiltReason[])Enum.GetValues(typeof(TargetBuiltReason));
+
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        var serializer = new PipeEventSerializer();
+        foreach (var reason in reasons)
+        {
+            serializer.Write(binaryWriter, new TargetStartedEventArgs(
+                message: "Target started",
+                helpKeyword: null,
+                targetName: "CoreCompile",
+                projectFile: "Foo.csproj",
+                targetFile: "Microsoft.CSharp.targets",
+                parentTarget: null,
+                buildReason: reason,
+                eventTimestamp: new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc)));
+        }
+
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = ReadAllEvents(memory);
+
+        Assert.AreEqual(reasons.Length, events.Count);
+        for (var i = 0; i < reasons.Length; i++)
+        {
+            var ts = (PipeTargetStartedEventArgs)events[i];
+            Assert.AreEqual((int)reasons[i], (int)ts.BuildReason);
+            Assert.AreEqual(reasons[i].ToString(), ts.BuildReason.ToString());
+        }
+    }
+
+    [TestMethod]
     public void OlderRecordsWithoutAppendedFidelityFieldsDegradeToDefaults()
     {
         // A TargetStarted record produced by a pre-fidelity writer: base header + the four original

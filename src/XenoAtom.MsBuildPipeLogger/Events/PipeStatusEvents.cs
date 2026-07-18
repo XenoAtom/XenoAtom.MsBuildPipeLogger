@@ -117,7 +117,8 @@ public sealed class PipeTargetFinishedEventArgs : PipeBuildEventArgs
     public IReadOnlyList<PipeItem> TargetOutputs { get; init; } = Array.Empty<PipeItem>();
 }
 
-/// <summary>Why a target was built. Mirrors <c>Microsoft.Build.Framework.TargetBuiltReason</c>.</summary>
+/// <summary>Why a target was built. Mirrors <c>Microsoft.Build.Framework.TargetBuiltReason</c>
+/// member for member, with identical numeric values.</summary>
 public enum PipeTargetBuiltReason
 {
     /// <summary>The target was built for no reason other than being asked for directly.</summary>
@@ -132,8 +133,14 @@ public enum PipeTargetBuiltReason
     /// <summary>The target was run because it appears in an <c>AfterTargets</c> attribute of another target.</summary>
     AfterTargets = 3,
 
-    /// <summary>The target was one of the entry targets requested for the build.</summary>
-    EntryTarget = 4,
+    /// <summary>The target was run because it is listed in the project's <c>InitialTargets</c> attribute.</summary>
+    InitialTargets = 4,
+
+    /// <summary>The target was run because it is listed in the project's <c>DefaultTargets</c> attribute.</summary>
+    DefaultTargets = 5,
+
+    /// <summary>The target was one of the entry targets explicitly requested for the build.</summary>
+    EntryTargets = 6,
 }
 
 /// <summary>Raised when a task starts executing.</summary>
