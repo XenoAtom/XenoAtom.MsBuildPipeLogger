@@ -19,7 +19,7 @@ public abstract class PipeWriter : IPipeWriter
     private readonly ManualResetEventSlim _doneProcessing = new(false);
     private readonly Stream _stream;
     private readonly BinaryWriter _binaryWriter;
-    private readonly BuildEventArgsWriterProxy _argsWriter;
+    private readonly PipeEventSerializer _serializer;
 
     // Buffer writes through a memory stream since the args writer does a bunch of small writes
     private readonly MemoryStream _memoryStream = new();
@@ -36,7 +36,7 @@ public abstract class PipeWriter : IPipeWriter
     {
         _stream = stream ?? throw new ArgumentNullException(nameof(stream));
         _binaryWriter = new BinaryWriter(_memoryStream);
-        _argsWriter = new BuildEventArgsWriterProxy(_binaryWriter);
+        _serializer = new PipeEventSerializer();
         var writerThread = new Thread(ProcessQueue)
         {
             IsBackground = true,
@@ -120,7 +120,7 @@ public abstract class PipeWriter : IPipeWriter
                 _memoryStream.SetLength(0);
 
                 // Buffer to the memory stream
-                _argsWriter.Write(eventArgs);
+                _serializer.Write(_binaryWriter, eventArgs);
                 _binaryWriter.Flush();
 
                 // ...then write that to the pipe

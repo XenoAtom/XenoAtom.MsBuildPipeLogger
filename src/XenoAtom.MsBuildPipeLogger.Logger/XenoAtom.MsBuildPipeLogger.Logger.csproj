@@ -11,6 +11,9 @@
     <None Include="$(MSBuildThisFileDirectory)../../readme.md" Pack="true" PackagePath="/" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="..\shared\**\*.cs" LinkBase="Shared" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="MinVer">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

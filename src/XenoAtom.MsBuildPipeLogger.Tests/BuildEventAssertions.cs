@@ -27,26 +27,26 @@ internal static class BuildEventAssertions
         }
     }
 
-    public static void AssertEvents(IReadOnlyList<BuildEventArgs> events, int messageCount, bool includeBuildFinished = false)
+    public static void AssertEvents(IReadOnlyList<PipeBuildEventArgs> events, int messageCount, bool includeBuildFinished = false)
     {
         var expectedCount = messageCount + 1 + (includeBuildFinished ? 1 : 0);
         Assert.AreEqual(expectedCount, events.Count);
-        Assert.IsInstanceOfType(events[0], typeof(BuildStartedEventArgs));
+        Assert.IsInstanceOfType(events[0], typeof(PipeBuildStartedEventArgs));
         Assert.AreEqual("Testing", events[0].Message);
 
         for (var index = 0; index < messageCount; index++)
         {
             var eventArg = events[index + 1];
-            Assert.IsInstanceOfType(eventArg, typeof(BuildMessageEventArgs));
+            Assert.IsInstanceOfType(eventArg, typeof(PipeBuildMessageEventArgs));
             Assert.AreEqual($"Testing {index}", eventArg.Message);
         }
 
         if (includeBuildFinished)
         {
             var finishedEvent = events[events.Count - 1];
-            Assert.IsInstanceOfType(finishedEvent, typeof(BuildFinishedEventArgs));
+            Assert.IsInstanceOfType(finishedEvent, typeof(PipeBuildFinishedEventArgs));
             Assert.AreEqual("Finished", finishedEvent.Message);
-            Assert.IsTrue(((BuildFinishedEventArgs)finishedEvent).Succeeded);
+            Assert.IsTrue(((PipeBuildFinishedEventArgs)finishedEvent).Succeeded);
         }
     }
 

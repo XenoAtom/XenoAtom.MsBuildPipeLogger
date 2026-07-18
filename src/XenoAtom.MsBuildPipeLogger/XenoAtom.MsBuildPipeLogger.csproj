@@ -16,12 +16,17 @@
     <None Include="$(MSBuildThisFileDirectory)..\..\readme.md" Pack="true" PackagePath="/" />
     <None Include="$(LoggerAssemblyPath)" Pack="true" PackagePath="contentFiles\any\any\$(LoggerContentDirectory)\" PackageCopyToOutput="true" PackageFlatten="false" CopyToOutputDirectory="PreserveNewest" TargetPath="$(LoggerContentDirectory)\$(LoggerAssemblyName)" Visible="false" />
   </ItemGroup>
+  <!-- The receiver deserializes into XenoAtom-owned event types and has no dependency on any
+       Microsoft.Build assembly, so it "just works" regardless of the MSBuild version used to build. -->
+  <ItemGroup>
+    <Compile Include="..\shared\**\*.cs" LinkBase="Shared" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="MinVer">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.Build" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="System.IO.Pipes" />
     <PackageReference Include="PolySharp">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

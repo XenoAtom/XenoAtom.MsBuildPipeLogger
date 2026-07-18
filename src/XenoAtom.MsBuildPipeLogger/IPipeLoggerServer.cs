@@ -2,8 +2,6 @@
 // Licensed under the MIT license.
 // See license.txt file in the project root for full license information.
 
-using Microsoft.Build.Framework;
-
 namespace XenoAtom.MsBuildPipeLogger;
 
 /// <summary>
@@ -16,7 +14,7 @@ public interface IPipeLoggerServer : IDisposable
     /// there are no more events, or the pipe is closed.
     /// </summary>
     /// <returns>The read event or <see langword="null"/> if there are no more events or the pipe is closed.</returns>
-    BuildEventArgs? Read();
+    PipeBuildEventArgs? Read();
 
     /// <summary>
     /// Reads all events from the pipe and blocks until there are no more events or the pipe is closed.

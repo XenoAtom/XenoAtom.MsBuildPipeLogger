@@ -4,9 +4,6 @@
 
 using System.IO.Pipes;
 using System.Net.Sockets;
-using System.Reflection;
-using Microsoft.Build.Framework;
-using Microsoft.Build.Logging;
 
 namespace XenoAtom.MsBuildPipeLogger;
 
@@ -15,13 +12,12 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// and <see cref="NamedPipeLoggerServer"/>.
 /// </summary>
 /// <typeparam name="TPipeStream">The concrete pipe stream type.</typeparam>
-public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipeLoggerServer
+public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipeLoggerServer
     where TPipeStream : PipeStream
 {
     private static readonly TimeSpan ReaderShutdownTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly BinaryReader _binaryReader;
-    private readonly BuildEventArgsReader _buildEventArgsReader;
+    private readonly PipeEventReader _eventReader;
     private readonly CancellationTokenRegistration _cancellationRegistration;
     private readonly object _readLock = new();
     private readonly Thread _readerThread;
@@ -72,8 +68,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
     protected PipeLoggerServer(TPipeStream pipeStream, CancellationToken cancellationToken, bool autoStart)
     {
         PipeStream = pipeStream ?? throw new ArgumentNullException(nameof(pipeStream));
-        _binaryReader = new BinaryReader(Buffer);
-        _buildEventArgsReader = new BuildEventArgsReader(_binaryReader, GetBinaryLoggerFileFormatVersion());
+        _eventReader = new PipeEventReader(Buffer);
         CancellationToken = cancellationToken;
         if (cancellationToken.CanBeCanceled)
         {
@@ -149,25 +144,8 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         }
     }
 
-    private static int GetBinaryLoggerFileFormatVersion()
-    {
-        var fileFormatVersionField = typeof(BinaryLogger).GetField(
-                                         "FileFormatVersion",
-                                         BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                                     ?? throw new MissingFieldException(typeof(BinaryLogger).FullName ?? typeof(BinaryLogger).Name, "FileFormatVersion");
-
-        var fileFormatVersion = fileFormatVersionField.GetValue(null);
-        if (fileFormatVersion is not int version)
-        {
-            throw new InvalidOperationException(
-                $"Field '{typeof(BinaryLogger).FullName}.FileFormatVersion' must be an integer.");
-        }
-
-        return version;
-    }
-
     /// <inheritdoc/>
-    public BuildEventArgs? Read()
+    public PipeBuildEventArgs? Read()
     {
         if (Volatile.Read(ref _disposed) != 0 || Buffer.IsCompleted)
         {
@@ -178,7 +156,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         {
             lock (_readLock)
             {
-                var args = _buildEventArgsReader.Read();
+                var args = _eventReader.Read();
                 if (args is not null)
                 {
                     Dispatch(args);
@@ -204,7 +182,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
         var args = Read();
         while (args is not null)
         {
-            if (args is BuildFinishedEventArgs)
+            if (args is PipeBuildFinishedEventArgs)
             {
                 return;
             }
@@ -231,8 +209,7 @@ public abstract class PipeLoggerServer<TPipeStream> : EventArgsDispatcher, IPipe
 
         lock (_readLock)
         {
-            _buildEventArgsReader.Dispose();
-            _binaryReader.Dispose();
+            _eventReader.Dispose();
             Buffer.Dispose();
         }
     }
