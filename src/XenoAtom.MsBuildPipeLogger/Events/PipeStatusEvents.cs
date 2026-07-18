@@ -41,6 +41,10 @@ public sealed class PipeProjectStartedEventArgs : PipeBuildEventArgs
 
     /// <summary>Gets the evaluated items, when the build attaches them to the project-started event.</summary>
     public IReadOnlyList<PipeItem> Items { get; init; } = Array.Empty<PipeItem>();
+
+    /// <summary>Gets the build context of the project that caused this project to build, if any. Used to
+    /// reconstruct the project dependency tree.</summary>
+    public PipeBuildEventContext? ParentProjectBuildEventContext { get; init; }
 }
 
 /// <summary>Raised when a project build finishes.</summary>
@@ -87,6 +91,9 @@ public sealed class PipeTargetStartedEventArgs : PipeBuildEventArgs
 
     /// <summary>Gets the name of the parent target that invoked this target, if any.</summary>
     public string? ParentTarget { get; init; }
+
+    /// <summary>Gets the reason the target was built (e.g. as a dependency, or before/after another target).</summary>
+    public PipeTargetBuiltReason BuildReason { get; init; }
 }
 
 /// <summary>Raised when a target finishes executing.</summary>
@@ -103,6 +110,30 @@ public sealed class PipeTargetFinishedEventArgs : PipeBuildEventArgs
 
     /// <summary>Gets a value indicating whether the target succeeded.</summary>
     public bool Succeeded { get; init; }
+
+    /// <summary>Gets the output items the target produced. Only populated when the build enables target-output
+    /// logging (otherwise empty); each item's <see cref="PipeItem.EvaluatedInclude"/> is the output value and
+    /// its <see cref="PipeItem.ItemType"/> is empty.</summary>
+    public IReadOnlyList<PipeItem> TargetOutputs { get; init; } = Array.Empty<PipeItem>();
+}
+
+/// <summary>Why a target was built. Mirrors <c>Microsoft.Build.Framework.TargetBuiltReason</c>.</summary>
+public enum PipeTargetBuiltReason
+{
+    /// <summary>The target was built for no reason other than being asked for directly.</summary>
+    None = 0,
+
+    /// <summary>The target was run because it appears in a <c>BeforeTargets</c> attribute of another target.</summary>
+    BeforeTargets = 1,
+
+    /// <summary>The target was run because it appears in a <c>DependsOnTargets</c> list of another target.</summary>
+    DependsOn = 2,
+
+    /// <summary>The target was run because it appears in an <c>AfterTargets</c> attribute of another target.</summary>
+    AfterTargets = 3,
+
+    /// <summary>The target was one of the entry targets requested for the build.</summary>
+    EntryTarget = 4,
 }
 
 /// <summary>Raised when a task starts executing.</summary>

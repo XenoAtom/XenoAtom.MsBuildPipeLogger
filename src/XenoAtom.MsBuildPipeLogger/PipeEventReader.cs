@@ -119,6 +119,7 @@ internal sealed class PipeEventReader : IDisposable
                 GlobalProperties = ReadProperties(r),
                 Properties = ReadProperties(r),
                 Items = ReadItems(r),
+                ParentProjectBuildEventContext = ReadOptionalContext(r),
             }, b),
         PipeRecordKind.ProjectFinished => ApplyBase(
             new PipeProjectFinishedEventArgs { ProjectFile = r.ReadNullableString(), Succeeded = r.ReadBoolean() }, b),
@@ -138,6 +139,7 @@ internal sealed class PipeEventReader : IDisposable
                 ProjectFile = r.ReadNullableString(),
                 TargetFile = r.ReadNullableString(),
                 ParentTarget = r.ReadNullableString(),
+                BuildReason = r.HasRemaining ? (PipeTargetBuiltReason)r.Read7Bit() : PipeTargetBuiltReason.None,
             }, b),
         PipeRecordKind.TargetFinished => ApplyBase(
             new PipeTargetFinishedEventArgs
@@ -146,6 +148,7 @@ internal sealed class PipeEventReader : IDisposable
                 ProjectFile = r.ReadNullableString(),
                 TargetFile = r.ReadNullableString(),
                 Succeeded = r.ReadBoolean(),
+                TargetOutputs = r.HasRemaining ? ReadTaskItems(r, null) : Array.Empty<PipeItem>(),
             }, b),
         PipeRecordKind.TaskStarted => ApplyBase(
             new PipeTaskStartedEventArgs
@@ -206,11 +209,13 @@ internal sealed class PipeEventReader : IDisposable
         {
             Kind = kind,
             ItemType = itemType,
-            Items = ReadTaskParameterItems(r, itemType),
+            Items = ReadTaskItems(r, itemType),
         };
     }
 
-    private static IReadOnlyList<PipeItem> ReadTaskParameterItems(WireBufferReader r, string? itemType)
+    // Reads a bare list of task items (spec + metadata) written by the serializer's WriteTaskItems, stamping
+    // each with the supplied item type (empty when none, as for target outputs).
+    private static IReadOnlyList<PipeItem> ReadTaskItems(WireBufferReader r, string? itemType)
     {
         var count = r.Read7Bit();
         if (count == 0)
@@ -255,6 +260,19 @@ internal sealed class PipeEventReader : IDisposable
 
     private static string? ReadOptionalTypeName(WireBufferReader r) =>
         r.HasRemaining ? r.ReadNullableString() : null;
+
+    // Reads a possibly-null BuildEventContext appended among the event-specific fields (as written by the
+    // serializer's WriteContext). Absent entirely when produced by an older writer, hence the HasRemaining guard.
+    private static PipeBuildEventContext? ReadOptionalContext(WireBufferReader r)
+    {
+        if (!r.HasRemaining || !r.ReadBoolean())
+        {
+            return null;
+        }
+
+        return new PipeBuildEventContext(
+            r.Read7Bit(), r.Read7Bit(), r.Read7Bit(), r.Read7Bit(), r.Read7Bit(), r.Read7Bit(), r.Read7Bit());
+    }
 
     private static IReadOnlyList<PipeProperty> ReadProperties(WireBufferReader r)
     {

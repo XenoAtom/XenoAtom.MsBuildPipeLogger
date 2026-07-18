@@ -110,6 +110,7 @@ internal sealed class PipeEventSerializer
                 WriteProperties(w, ps.GlobalProperties);
                 WriteProperties(w, ps.Properties);
                 WriteItems(w, ps.Items);
+                WriteContext(w, ps.ParentProjectBuildEventContext);
                 break;
             case PipeRecordKind.ProjectFinished:
                 var pf = (ProjectFinishedEventArgs)e;
@@ -131,6 +132,7 @@ internal sealed class PipeEventSerializer
                 w.WriteNullable(ts.ProjectFile);
                 w.WriteNullable(ts.TargetFile);
                 w.WriteNullable(ts.ParentTarget);
+                w.Write7Bit((int)ts.BuildReason);
                 break;
             case PipeRecordKind.TargetFinished:
                 var tf = (TargetFinishedEventArgs)e;
@@ -138,6 +140,7 @@ internal sealed class PipeEventSerializer
                 w.WriteNullable(tf.ProjectFile);
                 w.WriteNullable(tf.TargetFile);
                 w.Write(tf.Succeeded);
+                WriteTaskItems(w, tf.TargetOutputs);
                 break;
             case PipeRecordKind.TaskStarted:
                 var ks = (TaskStartedEventArgs)e;
@@ -162,7 +165,7 @@ internal sealed class PipeEventSerializer
                 var tp = (TaskParameterEventArgs)e;
                 w.Write7Bit((int)tp.Kind);
                 w.WriteNullable(tp.ItemType);
-                WriteTaskParameterItems(w, tp.Items);
+                WriteTaskItems(w, tp.Items);
                 break;
             case PipeRecordKind.Message:
                 WriteMessageFields(w, (BuildMessageEventArgs)e);
@@ -272,9 +275,10 @@ internal sealed class PipeEventSerializer
         }
     }
 
-    // Task-parameter items share a single parameter name (on the event), so each item is just its spec
-    // and metadata; the reader stamps the parameter name onto each resulting PipeItem.
-    private static void WriteTaskParameterItems(BinaryWriter w, IList? items)
+    // A bare list of task items (no per-item type key): used for task-parameter items — which share the
+    // single parameter name carried on the event — and for target outputs. Each item is just its spec and
+    // metadata; the reader stamps the appropriate item type onto each resulting PipeItem.
+    private static void WriteTaskItems(BinaryWriter w, IEnumerable? items)
     {
         if (items is null)
         {
@@ -297,6 +301,26 @@ internal sealed class PipeEventSerializer
             w.Write(taskItem.ItemSpec ?? string.Empty);
             WriteMetadata(w, taskItem);
         }
+    }
+
+    // Writes a possibly-null BuildEventContext as a presence flag followed by its identifiers. Mirrors the
+    // context layout in WireBaseFields, but appears among the event-specific fields rather than the header.
+    private static void WriteContext(BinaryWriter w, BuildEventContext? context)
+    {
+        if (context is null)
+        {
+            w.Write(false);
+            return;
+        }
+
+        w.Write(true);
+        w.Write7Bit(context.SubmissionId);
+        w.Write7Bit(context.NodeId);
+        w.Write7Bit(context.EvaluationId);
+        w.Write7Bit(context.ProjectInstanceId);
+        w.Write7Bit(context.ProjectContextId);
+        w.Write7Bit(context.TargetId);
+        w.Write7Bit(context.TaskId);
     }
 
     private static void WriteMetadata(BinaryWriter w, ITaskItem taskItem)

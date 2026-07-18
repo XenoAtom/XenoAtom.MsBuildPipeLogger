@@ -39,6 +39,17 @@ If your host application uses `Microsoft.Build` APIs for its *own* reasons (unre
 
 Because the receiver has no `Microsoft.Build` dependency and uses no reflection, it is safe to consume from a [Native AOT](https://learn.microsoft.com/dotnet/core/deploying/native-aot/) host. The `XenoAtom.MsBuildPipeLogger.NativeAotSample` project under `src/` publishes a native binary that spawns `dotnet msbuild` and receives events over a pipe end to end; `Microsoft.Build.Locator` is not used and would not work under AOT anyway, since the host never loads MSBuild into its own process.
 
+## Wire fidelity
+
+The pipe format is a deliberately curated projection of MSBuild's events, not a byte-for-byte copy of every `BuildEventArgs` field. Each `Pipe*EventArgs` type carries the fields the receiver needs to reconstruct a build, populated exclusively through MSBuild's public API. Every event carries the common base fields (`Message`, `HelpKeyword`, `SenderName`, `Timestamp`, `ThreadId`, and the originating `BuildEventContext`) plus the event-specific fields documented on each `Pipe*EventArgs` type, including:
+
+- `PipeProjectStartedEventArgs`: project id/file, requested targets, tools version, global/evaluated properties and items, and the **parent project build context** (`ParentProjectBuildEventContext`) used to reconstruct the project tree.
+- `PipeTargetStartedEventArgs`: target/project/target-file names, parent target, and the **build reason** (`BuildReason`).
+- `PipeTargetFinishedEventArgs`: target/project/target-file names, success, and the target's **output items** (`TargetOutputs`, populated only when the build enables target-output logging).
+- `PipeProjectEvaluationFinishedEventArgs` / `PipeTaskParameterEventArgs`: evaluated properties and items, and resolved task inputs/outputs.
+
+The wire format is **append-only**: fields are only ever added to the end of a record, never removed or reordered. A newer writer can therefore stream to an older receiver (which ignores trailing bytes it does not understand), and a newer receiver reads records from an older writer by treating the absent trailing fields as their defaults. If you rely on an MSBuild event field that is not currently projected, it can be added the same way — open an issue or PR.
+
 ## Transports
 
 The bundled `netstandard2.0` logger currently supports:

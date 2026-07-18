@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.IO;
+using System.Linq;
 using Microsoft.Build.Framework;
 
 namespace XenoAtom.MsBuildPipeLogger.Tests;
@@ -35,6 +36,113 @@ public class BuildEventSerializationTests
         }
 
         BuildEventAssertions.AssertEvents(events, messageCount);
+    }
+
+    [TestMethod]
+    public void RoundTripsTargetAndProjectFidelityFields()
+    {
+        var parentContext = new BuildEventContext(
+            submissionId: 1, nodeId: 2, evaluationId: 3, projectInstanceId: 4, projectContextId: 5, targetId: 6, taskId: 7);
+
+        var targetOutput = new Microsoft.Build.Utilities.TaskItem("obj/Foo.dll");
+        targetOutput.SetMetadata("Culture", "en-US");
+
+        var projectStarted = new ProjectStartedEventArgs(
+            projectId: 42,
+            message: "Project started",
+            helpKeyword: "help",
+            projectFile: "Foo.csproj",
+            targetNames: "Build",
+            properties: null,
+            items: null,
+            parentBuildEventContext: parentContext);
+
+        var timestamp = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        var targetStarted = new TargetStartedEventArgs(
+            message: "Target started",
+            helpKeyword: "help",
+            targetName: "CoreCompile",
+            projectFile: "Foo.csproj",
+            targetFile: "Microsoft.CSharp.targets",
+            parentTarget: "Compile",
+            buildReason: TargetBuiltReason.DependsOn,
+            eventTimestamp: timestamp);
+
+        var targetFinished = new TargetFinishedEventArgs(
+            message: "Target finished",
+            helpKeyword: "help",
+            targetName: "CoreCompile",
+            projectFile: "Foo.csproj",
+            targetFile: "Microsoft.CSharp.targets",
+            succeeded: true,
+            targetOutputs: new[] { targetOutput });
+
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        var serializer = new PipeEventSerializer();
+        serializer.Write(binaryWriter, projectStarted);
+        serializer.Write(binaryWriter, targetStarted);
+        serializer.Write(binaryWriter, targetFinished);
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = ReadAllEvents(memory);
+
+        Assert.AreEqual(3, events.Count);
+
+        var ps = (PipeProjectStartedEventArgs)events[0];
+        Assert.IsNotNull(ps.ParentProjectBuildEventContext);
+        var parent = ps.ParentProjectBuildEventContext.Value;
+        Assert.AreEqual(1, parent.SubmissionId);
+        Assert.AreEqual(2, parent.NodeId);
+        Assert.AreEqual(3, parent.EvaluationId);
+        Assert.AreEqual(4, parent.ProjectInstanceId);
+        Assert.AreEqual(5, parent.ProjectContextId);
+        Assert.AreEqual(6, parent.TargetId);
+        Assert.AreEqual(7, parent.TaskId);
+
+        var ts = (PipeTargetStartedEventArgs)events[1];
+        Assert.AreEqual(PipeTargetBuiltReason.DependsOn, ts.BuildReason);
+
+        var tf = (PipeTargetFinishedEventArgs)events[2];
+        Assert.AreEqual(1, tf.TargetOutputs.Count);
+        Assert.AreEqual("obj/Foo.dll", tf.TargetOutputs[0].EvaluatedInclude);
+        Assert.AreEqual(string.Empty, tf.TargetOutputs[0].ItemType);
+        var culture = tf.TargetOutputs[0].Metadata.Single(m => m.Name == "Culture");
+        Assert.AreEqual("en-US", culture.Value);
+    }
+
+    [TestMethod]
+    public void OlderRecordsWithoutAppendedFidelityFieldsDegradeToDefaults()
+    {
+        // A TargetStarted record produced by a pre-fidelity writer: base header + the four original
+        // event-specific fields, with NO trailing BuildReason varint. The reader must default it rather
+        // than treating the record as unparseable.
+        var baseFields = BuildBaseFields("older target", new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+        using var payload = new MemoryStream();
+        using var payloadWriter = new BinaryWriter(payload);
+        Write7Bit(payloadWriter, baseFields.Length);
+        payloadWriter.Write(baseFields);
+        WriteNullableString(payloadWriter, "CoreCompile"); // TargetName
+        WriteNullableString(payloadWriter, "Foo.csproj"); // ProjectFile
+        WriteNullableString(payloadWriter, "Microsoft.CSharp.targets"); // TargetFile
+        WriteNullableString(payloadWriter, "Compile"); // ParentTarget
+        payloadWriter.Flush();
+
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        Write7Bit(binaryWriter, 7); // PipeRecordKind.TargetStarted
+        Write7Bit(binaryWriter, (int)payload.Length);
+        binaryWriter.Write(payload.ToArray());
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = ReadAllEvents(memory);
+
+        Assert.AreEqual(1, events.Count);
+        var ts = (PipeTargetStartedEventArgs)events[0];
+        Assert.AreEqual("CoreCompile", ts.TargetName);
+        Assert.AreEqual(PipeTargetBuiltReason.None, ts.BuildReason);
     }
 
     [TestMethod]
