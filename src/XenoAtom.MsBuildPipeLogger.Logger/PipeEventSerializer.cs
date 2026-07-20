@@ -4,6 +4,7 @@
 
 using System.Collections;
 using System.IO;
+using System.Reflection;
 using Microsoft.Build.Framework;
 
 namespace XenoAtom.MsBuildPipeLogger;
@@ -41,25 +42,57 @@ internal sealed class PipeEventSerializer
         output.Write(_scratch.GetBuffer(), 0, (int)_scratch.Length);
     }
 
-    private static PipeRecordKind GetKind(BuildEventArgs e) => e switch
+    private const string TaskParameterEventArgsTypeName = "Microsoft.Build.Framework.TaskParameterEventArgs";
+
+    private static PipeRecordKind GetKind(BuildEventArgs e)
     {
-        BuildStartedEventArgs => PipeRecordKind.BuildStarted,
-        BuildFinishedEventArgs => PipeRecordKind.BuildFinished,
-        ProjectStartedEventArgs => PipeRecordKind.ProjectStarted,
-        ProjectFinishedEventArgs => PipeRecordKind.ProjectFinished,
-        ProjectEvaluationStartedEventArgs => PipeRecordKind.ProjectEvaluationStarted,
-        ProjectEvaluationFinishedEventArgs => PipeRecordKind.ProjectEvaluationFinished,
-        TargetStartedEventArgs => PipeRecordKind.TargetStarted,
-        TargetFinishedEventArgs => PipeRecordKind.TargetFinished,
-        TaskStartedEventArgs => PipeRecordKind.TaskStarted,
-        TaskFinishedEventArgs => PipeRecordKind.TaskFinished,
-        TaskCommandLineEventArgs => PipeRecordKind.TaskCommandLine, // before BuildMessageEventArgs
-        TaskParameterEventArgs => PipeRecordKind.TaskParameter, // before BuildMessageEventArgs
-        BuildMessageEventArgs => PipeRecordKind.Message,
-        BuildErrorEventArgs => PipeRecordKind.Error,
-        BuildWarningEventArgs => PipeRecordKind.Warning,
-        _ => PipeRecordKind.Custom,
-    };
+        // TaskParameterEventArgs only became a public type in MSBuild 16.10. Referencing it as a
+        // compile-time type pattern makes the JIT eagerly load the type when compiling this method, so
+        // on older MSBuild the whole logger would fail on the first event. Detect it by name instead;
+        // it derives from BuildMessageEventArgs, so this check must precede the Message case.
+        if (e is BuildMessageEventArgs && e.GetType().FullName == TaskParameterEventArgsTypeName)
+        {
+            return PipeRecordKind.TaskParameter;
+        }
+
+        return e switch
+        {
+            BuildStartedEventArgs => PipeRecordKind.BuildStarted,
+            BuildFinishedEventArgs => PipeRecordKind.BuildFinished,
+            ProjectStartedEventArgs => PipeRecordKind.ProjectStarted,
+            ProjectFinishedEventArgs => PipeRecordKind.ProjectFinished,
+            ProjectEvaluationStartedEventArgs => PipeRecordKind.ProjectEvaluationStarted,
+            ProjectEvaluationFinishedEventArgs => PipeRecordKind.ProjectEvaluationFinished,
+            TargetStartedEventArgs => PipeRecordKind.TargetStarted,
+            TargetFinishedEventArgs => PipeRecordKind.TargetFinished,
+            TaskStartedEventArgs => PipeRecordKind.TaskStarted,
+            TaskFinishedEventArgs => PipeRecordKind.TaskFinished,
+            TaskCommandLineEventArgs => PipeRecordKind.TaskCommandLine, // before BuildMessageEventArgs
+            BuildMessageEventArgs => PipeRecordKind.Message,
+            BuildErrorEventArgs => PipeRecordKind.Error,
+            BuildWarningEventArgs => PipeRecordKind.Warning,
+            _ => PipeRecordKind.Custom,
+        };
+    }
+
+    // Members added to MSBuild after 15.3 (the minimum MSBuild this logger supports). They are read
+    // reflectively and fall back to a default on older MSBuild so no compile-time member/type token
+    // forces the serializer to fail to JIT there, while the wire format stays byte-for-byte identical.
+    private static readonly PropertyInfo? BuildReasonProperty =
+        typeof(TargetStartedEventArgs).GetProperty("BuildReason"); // MSBuild 15.7
+    private static readonly PropertyInfo? EvaluationPropertiesProperty =
+        typeof(ProjectEvaluationFinishedEventArgs).GetProperty("Properties"); // MSBuild 16.10
+    private static readonly PropertyInfo? EvaluationItemsProperty =
+        typeof(ProjectEvaluationFinishedEventArgs).GetProperty("Items"); // MSBuild 16.10
+
+    private static int GetBuildReason(TargetStartedEventArgs e) =>
+        BuildReasonProperty is null ? 0 : Convert.ToInt32(BuildReasonProperty.GetValue(e));
+
+    private static IEnumerable? GetEvaluationProperties(ProjectEvaluationFinishedEventArgs e) =>
+        EvaluationPropertiesProperty?.GetValue(e) as IEnumerable;
+
+    private static IEnumerable? GetEvaluationItems(ProjectEvaluationFinishedEventArgs e) =>
+        EvaluationItemsProperty?.GetValue(e) as IEnumerable;
 
     private void WriteBase(BinaryWriter w, BuildEventArgs e)
     {
@@ -123,8 +156,8 @@ internal sealed class PipeEventSerializer
             case PipeRecordKind.ProjectEvaluationFinished:
                 var pe = (ProjectEvaluationFinishedEventArgs)e;
                 w.WriteNullable(pe.ProjectFile);
-                WriteProperties(w, pe.Properties);
-                WriteItems(w, pe.Items);
+                WriteProperties(w, GetEvaluationProperties(pe));
+                WriteItems(w, GetEvaluationItems(pe));
                 break;
             case PipeRecordKind.TargetStarted:
                 var ts = (TargetStartedEventArgs)e;
@@ -132,7 +165,7 @@ internal sealed class PipeEventSerializer
                 w.WriteNullable(ts.ProjectFile);
                 w.WriteNullable(ts.TargetFile);
                 w.WriteNullable(ts.ParentTarget);
-                w.Write7Bit((int)ts.BuildReason);
+                w.Write7Bit(GetBuildReason(ts));
                 break;
             case PipeRecordKind.TargetFinished:
                 var tf = (TargetFinishedEventArgs)e;
@@ -162,10 +195,7 @@ internal sealed class PipeEventSerializer
                 WriteMessageFields(w, cl);
                 break;
             case PipeRecordKind.TaskParameter:
-                var tp = (TaskParameterEventArgs)e;
-                w.Write7Bit((int)tp.Kind);
-                w.WriteNullable(tp.ItemType);
-                WriteTaskItems(w, tp.Items);
+                WriteTaskParameter(w, e);
                 break;
             case PipeRecordKind.Message:
                 WriteMessageFields(w, (BuildMessageEventArgs)e);
@@ -196,6 +226,17 @@ internal sealed class PipeEventSerializer
                 w.WriteNullable(e.GetType().Name);
                 break;
         }
+    }
+
+    // Isolated so the TaskParameterEventArgs type (public only since MSBuild 16.10) is loaded lazily,
+    // when such an event is actually serialized — which can only happen on 16.10+. This method is never
+    // called (and so never JITs) on older MSBuild, where no TaskParameterEventArgs is ever raised.
+    private static void WriteTaskParameter(BinaryWriter w, BuildEventArgs e)
+    {
+        var tp = (TaskParameterEventArgs)e;
+        w.Write7Bit((int)tp.Kind);
+        w.WriteNullable(tp.ItemType);
+        WriteTaskItems(w, tp.Items);
     }
 
     private static void WriteMessageFields(BinaryWriter w, BuildMessageEventArgs e)
