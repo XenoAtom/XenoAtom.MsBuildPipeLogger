@@ -119,9 +119,20 @@ public abstract class PipeWriter : IPipeWriter
                 _memoryStream.Seek(0, SeekOrigin.Begin);
                 _memoryStream.SetLength(0);
 
-                // Buffer to the memory stream
-                _serializer.Write(_binaryWriter, eventArgs);
-                _binaryWriter.Flush();
+                try
+                {
+                    // Buffer to the memory stream
+                    _serializer.Write(_binaryWriter, eventArgs);
+                    _binaryWriter.Flush();
+                }
+                catch (Exception)
+                {
+                    // A single event that can't be serialized (e.g. a type or member that is missing on
+                    // an older MSBuild) must not tear down the whole stream. Nothing is written to the
+                    // pipe until serialization fully succeeds, so the transport stays consistent; drop
+                    // just this event and keep going.
+                    continue;
+                }
 
                 // ...then write that to the pipe
                 _memoryStream.WriteTo(_stream);
