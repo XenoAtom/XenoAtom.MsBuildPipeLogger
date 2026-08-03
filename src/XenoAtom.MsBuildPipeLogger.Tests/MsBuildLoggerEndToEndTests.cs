@@ -19,7 +19,7 @@ public class MsBuildLoggerEndToEndTests
     [TestMethod]
     public async Task DotNetMsBuild_LoadsLoggerAndStreamsBuildEvents()
     {
-        var pipeName = $"xenoatom-msbuild-{Guid.NewGuid():N}";
+        var pipeName = PipeLoggerServer.CreateUniquePipeName("xa-test");
         var projectDirectory = Path.Combine(Path.GetTempPath(), $"xenoatom-msbuild-{Guid.NewGuid():N}");
         var projectPath = Path.Combine(projectDirectory, "build.proj");
         Directory.CreateDirectory(projectDirectory);
@@ -47,7 +47,11 @@ public class MsBuildLoggerEndToEndTests
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await Task.WhenAll(readTask, process.WaitForExitAsync()).WaitAsync(TestTimeout).ConfigureAwait(false);
+            await process.WaitForExitAsync().WaitAsync(TestTimeout).ConfigureAwait(false);
+
+            // The observed process has exited, so no further submission can connect.
+            server.StopListening();
+            await readTask.WaitAsync(TestTimeout).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {

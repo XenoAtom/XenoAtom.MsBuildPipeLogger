@@ -91,7 +91,25 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
     /// <summary>
     /// Connects the server-side pipe stream to a client.
     /// </summary>
-    protected abstract void Connect();
+    /// <returns><see langword="true"/> if a client was connected and should be read;
+    /// <see langword="false"/> to finish without reading.</returns>
+    protected abstract bool Connect();
+
+    /// <summary>
+    /// Accepts the next client once the current one has disconnected, for transports that serve more than
+    /// one connection. The base implementation serves a single connection and always returns
+    /// <see langword="false"/>.
+    /// </summary>
+    /// <returns><see langword="true"/> if another client was accepted and should be read;
+    /// <see langword="false"/> to finish reading.</returns>
+    protected virtual bool TryAcceptNextConnection() => false;
+
+    /// <inheritdoc/>
+    public virtual void StopListening()
+    {
+        // A transport that serves a single connection has nothing to stop accepting: it finishes when
+        // the client disconnects.
+    }
 
     /// <summary>
     /// Starts the background reader thread.
@@ -111,10 +129,20 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
     {
         try
         {
-            Connect();
-            while (Buffer.FillFromStream(PipeStream, CancellationToken))
+            if (!Connect())
             {
+                return;
             }
+
+            do
+            {
+                DrainCurrentConnection();
+
+                // Fence off whatever this client sent, so a record it left half-written cannot run on
+                // into the next client's bytes.
+                Buffer.WriteConnectionBoundary();
+            }
+            while (TryAcceptNextConnection());
         }
         catch (IOException)
         {
@@ -144,6 +172,25 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
         }
     }
 
+    /// <summary>
+    /// Reads from the currently connected client until it disconnects.
+    /// </summary>
+    private void DrainCurrentConnection()
+    {
+        try
+        {
+            while (Buffer.FillFromStream(PipeStream, CancellationToken))
+            {
+            }
+        }
+        catch (IOException)
+        {
+            // This client broke the stream, for example an MSBuild node that died mid-write. That ends
+            // the connection rather than the transport, so a later build submission can still be served.
+            // Disposal and cancellation surface as other exception types and are left to propagate.
+        }
+    }
+
     /// <inheritdoc/>
     public PipeBuildEventArgs? Read()
     {
@@ -152,42 +199,47 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
             return null;
         }
 
-        try
+        lock (_readLock)
         {
-            lock (_readLock)
+            while (true)
             {
-                var args = _eventReader.Read();
-                if (args is not null)
+                try
                 {
-                    Dispatch(args);
-                    return args;
+                    var args = _eventReader.Read();
+                    if (args is not null)
+                    {
+                        Dispatch(args);
+                        return args;
+                    }
+                }
+                catch (EndOfStreamException)
+                {
+                    // A record ran out of bytes part-way through. Whether that is the end of the transport
+                    // or just the end of one client is settled by the boundary check below.
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The server was disposed while reading.
+                    return null;
+                }
+
+                // The record stream ran out. If a client simply went away, anything half-read belonged to
+                // it and the bytes that follow are a fresh record stream, so resume rather than stop.
+                if (!Buffer.TryConsumeConnectionBoundary())
+                {
+                    return null;
                 }
             }
         }
-        catch (EndOfStreamException)
-        {
-            // The stream may have been closed or otherwise stopped.
-        }
-        catch (ObjectDisposedException)
-        {
-            // The server was disposed while reading.
-        }
-
-        return null;
     }
 
     /// <inheritdoc/>
     public void ReadAll()
     {
-        var args = Read();
-        while (args is not null)
+        // Deliberately not stopping at PipeBuildFinishedEventArgs: that marks the end of one MSBuild
+        // submission, not the end of the transport, and a build can run several submissions.
+        while (Read() is not null)
         {
-            if (args is PipeBuildFinishedEventArgs)
-            {
-                return;
-            }
-
-            args = Read();
         }
     }
 
