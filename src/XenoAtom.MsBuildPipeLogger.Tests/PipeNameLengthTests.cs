@@ -16,8 +16,8 @@ public class PipeNameLengthTests
         var pipeName = PipeLoggerServer.CreateUniquePipeName();
 
         Assert.IsTrue(
-            Encoding.UTF8.GetByteCount(pipeName) <= PipeLoggerServer.GetMaximumPipeNameLength(),
-            $"'{pipeName}' ({pipeName.Length}) exceeds the {PipeLoggerServer.GetMaximumPipeNameLength()} character limit.");
+            PipeLoggerServer.GetPipeNameLength(pipeName) <= PipeLoggerServer.GetMaximumPipeNameLength(),
+            $"'{pipeName}' exceeds the platform's {PipeLoggerServer.GetMaximumPipeNameLength()} unit limit.");
     }
 
     [TestMethod]
@@ -57,6 +57,27 @@ public class PipeNameLengthTests
         var pipeName = PipeLoggerServer.CreateUniquePipeName("myapp");
 
         Assert.IsTrue(pipeName.StartsWith("myapp-", StringComparison.Ordinal), pipeName);
+    }
+
+    [TestMethod]
+    public void CreateUniquePipeName_WithUnicodePrefix_FitsAndIsAcceptedByTheServer()
+    {
+        var pipeName = PipeLoggerServer.CreateUniquePipeName(new string('\u00e9', 300));
+
+        Assert.IsTrue(PipeLoggerServer.GetPipeNameLength(pipeName) <= PipeLoggerServer.GetMaximumPipeNameLength());
+        using var server = new NamedPipeLoggerServer(pipeName);
+        Assert.AreEqual(pipeName, server.PipeName);
+    }
+
+    [TestMethod]
+    public void CreateUniquePipeName_DoesNotSplitASurrogatePair()
+    {
+        var pipeName = PipeLoggerServer.CreateUniquePipeName(string.Concat(Enumerable.Repeat("\U0001F600", 300)));
+
+        var separatorIndex = pipeName.IndexOf('-');
+        Assert.IsTrue(separatorIndex > 0, pipeName);
+        Assert.IsFalse(char.IsHighSurrogate(pipeName[separatorIndex - 1]));
+        Assert.IsTrue(PipeLoggerServer.GetPipeNameLength(pipeName) <= PipeLoggerServer.GetMaximumPipeNameLength());
     }
 
     [TestMethod]

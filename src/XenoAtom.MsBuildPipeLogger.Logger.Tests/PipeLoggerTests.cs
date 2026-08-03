@@ -166,6 +166,26 @@ public class PipeLoggerTests
     }
 
     [TestMethod]
+    public void Initialize_WithInvalidParameters_FailsFastAndRestoresEnvironmentVariables()
+    {
+        var oldLogImports = Environment.GetEnvironmentVariable("MSBUILDLOGIMPORTS");
+        try
+        {
+            Environment.SetEnvironmentVariable("MSBUILDLOGIMPORTS", "existing");
+            var logger = new PipeLogger { Parameters = "bogus=value" };
+
+            Assert.Throws<LoggerException>(() => logger.Initialize(new TestEventSource()));
+
+            // A configuration error must remain visible without leaking the process-wide environment change.
+            Assert.AreEqual("existing", Environment.GetEnvironmentVariable("MSBUILDLOGIMPORTS"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MSBUILDLOGIMPORTS", oldLogImports);
+        }
+    }
+
+    [TestMethod]
     public void Initialize_OnASecondSubmissionOverAnAnonymousPipe_DoesNotFailTheBuild()
     {
         using var server = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);

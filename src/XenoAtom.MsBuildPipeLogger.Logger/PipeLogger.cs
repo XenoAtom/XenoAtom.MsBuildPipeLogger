@@ -30,6 +30,7 @@ public class PipeLogger : Logger
 
     /// <inheritdoc/>
     /// <exception cref="ArgumentNullException"><paramref name="eventSource"/> is <see langword="null"/>.</exception>
+    /// <exception cref="LoggerException">The logger parameters are invalid.</exception>
     public override void Initialize(IEventSource eventSource)
     {
         if (eventSource is null)
@@ -43,17 +44,25 @@ public class PipeLogger : Logger
         {
             Pipe = InitializePipeWriter();
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            // A logger that cannot reach its pipe must not tear down the build it is observing, for the
-            // same reason a failed write does not. MSBuild turns an exception from Initialize into a hard
-            // MSB4016 build failure, so the build continues unlogged instead.
-            //
-            // An anonymous pipe reaches this on any build submission after the first: Shutdown disposes the
-            // client stream, which closes the inherited handle, and a handle cannot be reopened. Named pipes
-            // reconnect per submission and are the transport to use when a build may run more than one.
             RestoreEnvironmentVariables();
-            return;
+
+            if (IsPipeConnectionFailure(exception))
+            {
+                // A logger that cannot reach its pipe must not tear down the build it is observing, for the
+                // same reason a failed write does not. MSBuild turns an exception from Initialize into a hard
+                // MSB4016 build failure, so the build continues unlogged instead.
+                //
+                // An anonymous pipe reaches this on any build submission after the first: Shutdown disposes the
+                // client stream, which closes the inherited handle, and a handle cannot be reopened. Named pipes
+                // reconnect per submission and are the transport to use when a build may run more than one.
+                return;
+            }
+
+            // Invalid logger parameters and programming errors must still fail fast rather than silently
+            // leaving the caller with a successful build and no log.
+            throw;
         }
 
         InitializeEvents(eventSource);
@@ -101,6 +110,9 @@ public class PipeLogger : Logger
     /// </summary>
     /// <returns>The initialized pipe writer.</returns>
     protected virtual IPipeWriter InitializePipeWriter() => ParameterParser.GetPipeFromParameters(Parameters ?? string.Empty);
+
+    private static bool IsPipeConnectionFailure(Exception exception) =>
+        exception is IOException || exception is TimeoutException || exception is UnauthorizedAccessException;
 
     /// <summary>
     /// Subscribes to MSBuild events and forwards them to the active pipe writer.

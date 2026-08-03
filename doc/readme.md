@@ -161,11 +161,11 @@ MSBuild attaches a logger once per *build submission*, and one command can be se
 var readTask = Task.Run(server.ReadAll);
 process.Start();
 process.WaitForExit();
-server.StopListening();   // stop accepting clients, then drain what has already arrived
+server.StopListening();   // request a stop, then drain what has already arrived
 readTask.Wait();
 ```
 
-Use `StopListening()` rather than `Dispose()` to finish a read. `Dispose()` tears the transport down immediately and can discard events that were received but not yet handed to you; `StopListening()` stops accepting new clients and lets the backlog drain first.
+Use `StopListening()` rather than `Dispose()` to finish a read. `Dispose()` tears the transport down immediately and can discard events that were received but not yet handed to you; `StopListening()` lets the backlog drain first. The operating system does not expose when an unaccepted client entered its queue, so the named-pipe server uses a short grace period after each client to establish that the queue is empty. A client that arrives after the stop request can therefore still be accepted during a grace period. Call `StopListening()` only after the observed process exits and cannot connect again; if an unrelated client continues connecting, use cancellation or `Dispose()` to force the transport closed.
 
 If you know there is exactly one submission — you are invoking `dotnet msbuild`, or `dotnet build --no-restore` with restore driven separately — you can opt out and let the read end when the client disconnects:
 
@@ -182,6 +182,8 @@ The logger does not fail the build when this happens; it leaves the later submis
 `StopListening()` is a no-op on an anonymous pipe, because there is a single client and the read already ends when that client goes away — normally when the build process exits, so the `WaitForExit`/`StopListening`/`Wait` sequence above still works unchanged. To end an anonymous read *early*, `Dispose()` is the only lever, and it can discard events that were received but not yet handed to you.
 
 > **Breaking change in this release.** A `process.WaitForExit(); readTask.Wait();` sequence written against an earlier version needs `server.StopListening()` inserted between the two lines. Without it `readTask` waits for a submission that will never arrive. It fails immediately and consistently rather than intermittently.
+
+Custom transports derived from `PipeLoggerServer<TPipeStream>` must also update their `Connect()` override from `void` to `bool`, returning `true` when a client was connected and should be read or `false` when the read should finish without a client.
 
 ## Pipe names on Unix
 

@@ -4,7 +4,7 @@
 
 using System.IO.Pipes;
 using System.Net.Sockets;
-using System.Text;
+using System.Runtime.InteropServices;
 
 namespace XenoAtom.MsBuildPipeLogger;
 
@@ -182,11 +182,14 @@ public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
         // On Unix the name becomes part of a domain socket path, and exceeding the platform limit
         // otherwise surfaces as an ArgumentOutOfRangeException about a 'path' the caller never supplied.
         var maximumLength = PipeLoggerServer.GetMaximumPipeNameLength();
-        if (Encoding.UTF8.GetByteCount(pipeName) > maximumLength)
+        if (PipeLoggerServer.GetPipeNameLength(pipeName) > maximumLength)
         {
+            var limitDescription = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? $"this platform allows at most {maximumLength} characters"
+                : $"this platform allows at most {maximumLength} UTF-8 bytes because the name becomes part " +
+                  $"of a socket path under '{Path.GetTempPath()}'";
             throw new ArgumentException(
-                $"The pipe name '{pipeName}' is too long: this platform allows at most {maximumLength} characters " +
-                $"because the name becomes part of a socket path under '{Path.GetTempPath()}'. Use " +
+                $"The pipe name '{pipeName}' is too long: {limitDescription}. Use " +
                 $"{nameof(PipeLoggerServer)}.{nameof(PipeLoggerServer.CreateUniquePipeName)}() to get a name that fits.",
                 nameof(pipeName));
         }
@@ -256,12 +259,13 @@ public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
     }
 
     /// <summary>
-    /// Accepts a client that connected before the stop was requested, if one is still queued.
+    /// Waits briefly for a client that may have connected before the stop was requested.
     /// </summary>
     /// <remarks>
-    /// Accepting is immediate when the queue is not empty, so the timeout is only how long we are willing
-    /// to wait to establish that it <em>is</em> empty. It bounds the end of a read rather than deciding
-    /// whether a connected client is served.
+    /// Accepting is immediate when the queue is not empty, so the timeout is how long we are willing to wait
+    /// to establish that it <em>is</em> empty. The operating system does not expose when an unaccepted client
+    /// entered the queue, so a client that arrives after the stop request can also be accepted during this
+    /// grace period. Callers should request the stop only after the observed process has exited.
     /// </remarks>
     private bool TryAcceptQueuedConnection()
     {

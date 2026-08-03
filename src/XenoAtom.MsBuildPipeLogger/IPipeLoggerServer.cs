@@ -29,8 +29,8 @@ public interface IPipeLoggerServer : IDisposable
     void ReadAll();
 
     /// <summary>
-    /// Stops accepting new client connections and lets the events already received drain, so that a
-    /// pending <see cref="Read"/> or <see cref="ReadAll"/> can return.
+    /// Requests an end to accepting client connections and lets the events already received drain, so that
+    /// a pending <see cref="Read"/> or <see cref="ReadAll"/> can return.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -38,6 +38,14 @@ public interface IPipeLoggerServer : IDisposable
     /// to finish reading: <see cref="IDisposable.Dispose"/> tears the transport down immediately and can
     /// discard events that have been received but not yet handed to the caller. It is safe to call more
     /// than once and from any thread.
+    /// </para>
+    /// <para>
+    /// A transport may use a short grace period after each client to accept connections already queued by
+    /// the operating system. Because the operating system does not expose when an unaccepted client entered
+    /// that queue, a client that arrives after this request can also be accepted during a grace period. Call
+    /// this only after the observed process exits and cannot create another connection. If an unrelated
+    /// client continues connecting, cancellation or <see cref="IDisposable.Dispose"/> is required to force
+    /// the transport closed.
     /// </para>
     /// <para>
     /// This only does something on a transport that accepts more than one connection, which is what makes a

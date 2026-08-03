@@ -54,8 +54,7 @@ public static class PipeLoggerServer
     /// operating system, so the limit depends on the length of the temporary directory and can be far
     /// shorter than callers expect — a per-user <c>TMPDIR</c> such as macOS's leaves only about 44
     /// characters. Prefer <see cref="CreateUniquePipeName()"/>, which always returns a name that fits.
-    /// The length is measured in UTF-8 bytes, which is the same as the character count for the ASCII
-    /// names that pipe names should use anyway.
+    /// On Unix the length is measured in UTF-8 bytes; on Windows it is measured in UTF-16 characters.
     /// </remarks>
     /// <returns>The maximum supported pipe name length, or <c>0</c> if no name can fit.</returns>
     public static int GetMaximumPipeNameLength()
@@ -69,6 +68,15 @@ public static class PipeLoggerServer
         var available = UnixMaximumSocketPathLength - UnixSocketPathTerminatorLength - prefixLength;
         return available > 0 ? available : 0;
     }
+
+    /// <summary>
+    /// Gets the platform-specific length of a pipe name in the same units as
+    /// <see cref="GetMaximumPipeNameLength()"/>.
+    /// </summary>
+    internal static int GetPipeNameLength(string pipeName) =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? pipeName.Length
+            : Encoding.UTF8.GetByteCount(pipeName);
 
     /// <summary>
     /// Creates a unique pipe name that is guaranteed to fit within <see cref="GetMaximumPipeNameLength()"/>
@@ -115,13 +123,73 @@ public static class PipeLoggerServer
                 "environment variable to a shorter directory.");
         }
 
-        var prefixRoom = maximum - unique.Length - 1;
-        if (prefix.Length == 0 || prefixRoom <= 0)
+        var prefixBudget = maximum - unique.Length - 1;
+        if (prefix.Length == 0 || prefixBudget <= 0)
         {
             return unique;
         }
 
-        return string.Concat(prefix.Substring(0, Math.Min(prefix.Length, prefixRoom)), "-", unique);
+        var prefixLength = GetPrefixLength(prefix, prefixBudget);
+        return prefixLength == 0
+            ? unique
+            : string.Concat(prefix.Substring(0, prefixLength), "-", unique);
+    }
+
+    /// <summary>
+    /// Gets the longest prefix substring that fits the platform-specific pipe-name budget without
+    /// splitting a UTF-16 surrogate pair.
+    /// </summary>
+    private static int GetPrefixLength(string prefix, int budget)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var length = Math.Min(prefix.Length, budget);
+            if (length > 0 && length < prefix.Length &&
+                char.IsHighSurrogate(prefix[length - 1]) && char.IsLowSurrogate(prefix[length]))
+            {
+                length--;
+            }
+
+            return length;
+        }
+
+        var utf8ByteCount = 0;
+        var prefixLength = 0;
+        while (prefixLength < prefix.Length)
+        {
+            var character = prefix[prefixLength];
+            var characterLength = 1;
+            int characterByteCount;
+            if (character <= 0x7f)
+            {
+                characterByteCount = 1;
+            }
+            else if (character <= 0x7ff)
+            {
+                characterByteCount = 2;
+            }
+            else if (char.IsHighSurrogate(character) && prefixLength + 1 < prefix.Length &&
+                     char.IsLowSurrogate(prefix[prefixLength + 1]))
+            {
+                characterLength = 2;
+                characterByteCount = 4;
+            }
+            else
+            {
+                // A BMP character, or the three-byte replacement emitted for an unpaired surrogate.
+                characterByteCount = 3;
+            }
+
+            if (utf8ByteCount + characterByteCount > budget)
+            {
+                break;
+            }
+
+            utf8ByteCount += characterByteCount;
+            prefixLength += characterLength;
+        }
+
+        return prefixLength;
     }
 
     /// <summary>

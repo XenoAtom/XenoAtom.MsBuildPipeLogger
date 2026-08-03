@@ -128,7 +128,7 @@ public class NamedPipeMultipleSubmissionTests
     public async Task StopListening_DrainsEventsAlreadyReceived()
     {
         // Dispose tears the transport down at once and can discard buffered events; StopListening has to
-        // stop accepting clients but still hand over everything already read.
+        // finish listening gracefully while still handing over everything already read.
         for (var attempt = 0; attempt < 20; attempt++)
         {
             var pipeName = CreatePipeName();
