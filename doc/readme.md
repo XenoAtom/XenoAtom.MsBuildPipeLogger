@@ -165,7 +165,13 @@ server.StopListening();   // request a stop, then drain what has already arrived
 readTask.Wait();
 ```
 
-Use `StopListening()` rather than `Dispose()` to finish a read. `Dispose()` tears the transport down immediately and can discard events that were received but not yet handed to you; `StopListening()` lets the backlog drain first. The operating system does not expose when an unaccepted client entered its queue, so the named-pipe server uses a short grace period after each client to establish that the queue is empty. A client that arrives after the stop request can therefore still be accepted during a grace period. Call `StopListening()` only after the observed process exits and cannot connect again; if an unrelated client continues connecting, use cancellation or `Dispose()` to force the transport closed.
+Use `StopListening()` rather than `Dispose()` to finish a read. `Dispose()` tears the transport down immediately and can discard events that were received but not yet handed to you; `StopListening()` lets the backlog drain first. On Unix the operating system does not expose when an unaccepted client entered its queue, so the named-pipe server uses a short grace period after each client to establish that the queue is empty, and a client that arrives after the stop request can still be accepted during it. On Windows a client that is already connected is served and the stop ends the wait for the next one at once. Call `StopListening()` only after the observed process exits and cannot connect again; if an unrelated client continues connecting, use cancellation or `Dispose()` to force the transport closed.
+
+### A receiver that is slow to read
+
+The logger never fails the build it observes. When its events cannot be written, it waits for as long as the receiver keeps reading; if the receiver reads nothing for 30 seconds, the logger writes a line to the standard error of the build process, drops the events that are left and lets the build end normally. A receiver then sees a `BuildStarted` without its `BuildFinished`.
+
+The servers read the pipe on a thread of their own. On Windows, `NamedPipeLoggerServer` and `AnonymousPipeLoggerServer` need no thread of the .NET thread pool for it, so they keep up in a host whose thread pool is starved, for example by the redirected output of many build processes started at once. On Unix, accepting a named-pipe client completes on the thread pool: a starved host delays the events there, without losing them as long as it recovers within the 30 seconds.
 
 If you know there is exactly one submission — you are invoking `dotnet msbuild`, or `dotnet build --no-restore` with restore driven separately — you can opt out and let the read end when the client disconnects:
 

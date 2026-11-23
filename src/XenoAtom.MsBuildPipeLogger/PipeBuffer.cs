@@ -291,29 +291,29 @@ internal class PipeBuffer : Stream
         public int FillFromStream(Stream stream, CancellationToken cancellationToken)
         {
             _offset = 0;
-            if (stream is AnonymousPipeServerStream || stream is AnonymousPipeClientStream)
+            try
             {
-                // We can't use ReadAsync with Anonymous PipeStream
-                // https://github.com/dotnet/runtime/issues/23638
-                // https://docs.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
-                // Asynchronous (overlapped) read and write operations are not supported by anonymous pipes
-                Count = cancellationToken.IsCancellationRequested ? 0 : stream.Read(_buffer, _offset, BufferSize);
-            }
-            else
-            {
-                try
+                if (stream is PipeStream { IsAsync: false })
+                {
+                    // A blocking read on the calling thread, which is the reader thread of the server: it
+                    // needs no thread of the host's thread pool, so it keeps up when that pool is starved.
+                    // Anonymous pipes have no other kind of read (https://github.com/dotnet/runtime/issues/23638).
+                    // The server interrupts it by cancelling the I/O of the pipe or by disposing the pipe.
+                    Count = cancellationToken.IsCancellationRequested ? 0 : stream.Read(_buffer, _offset, BufferSize);
+                }
+                else
                 {
                     var readTask = stream.ReadAsync(_buffer, _offset, BufferSize, cancellationToken);
                     Count = readTask.GetAwaiter().GetResult();
                 }
-                catch (OperationCanceledException)
-                {
-                    Count = 0;
-                }
-                catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
-                {
-                    Count = 0;
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                Count = 0;
+            }
+            catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+            {
+                Count = 0;
             }
 
             return Count;

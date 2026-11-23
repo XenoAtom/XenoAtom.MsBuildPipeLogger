@@ -20,17 +20,32 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </remarks>
 public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
 {
-    // How long to wait to establish that no more clients are queued once a stop has been requested. A
-    // client that has already connected is accepted immediately, so this only has to cover scheduling the
-    // completion, not waiting for anyone to arrive.
+    // On Windows the accept and every read are blocking calls of the reader thread on a synchronous
+    // handle, so that receiving events needs no thread of the host's thread pool. A host that runs many
+    // build processes at once can have that pool starved, typically by the redirected output of those
+    // processes, and a logger whose pipe is not read gives up after a while and drops the rest of the
+    // build. A blocking accept is ended by cancelling the I/O of the handle.
+    //
+    // On Unix the runtime only offers an accept that completes on the thread pool, and its cancellation
+    // is what stops the listener there, so the accept and the reads stay asynchronous.
+    private static readonly bool UseBlockingCalls = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    // Unix: how long to wait to establish that no more clients are queued once a stop has been requested.
+    // A client that has already connected is accepted immediately, so this only has to cover scheduling
+    // the completion, not waiting for anyone to arrive.
     private static readonly TimeSpan BacklogDrainTimeout = TimeSpan.FromMilliseconds(250);
 
-    // Cancelling the accept is the entire stop mechanism. A CancellationToken already makes "observe the
-    // stop" and "claim the wait" one atomic step: an accept started with a cancelled token never blocks,
-    // and one already blocked is cancelled. So there is no window in which a stop goes unnoticed and no
-    // need to wake the reader by connecting to ourselves.
+    // Unix: cancelling the accept is the entire stop mechanism. A CancellationToken already makes "observe
+    // the stop" and "claim the wait" one atomic step: an accept started with a cancelled token never
+    // blocks, and one already blocked is cancelled. So there is no window in which a stop goes unnoticed
+    // and no need to wake the reader by connecting to ourselves.
     private readonly CancellationTokenSource _stopListeningSource = new();
     private readonly CancellationTokenRegistration _cancellationRegistration;
+
+    // Windows: guards _accepting, so that a stop cancels the accept and never the read that follows it.
+    private readonly object _acceptLock = new();
+    private bool _accepting;
+    private int _stopRequested;
 
     /// <summary>
     /// Gets the named pipe name.
@@ -109,6 +124,23 @@ public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
     /// <inheritdoc/>
     public override void StopListening()
     {
+        if (UseBlockingCalls)
+        {
+            if (Interlocked.Exchange(ref _stopRequested, 1) == 0)
+            {
+                // Not on the calling thread: the reader may be busy with a client for a while, and the
+                // accept that follows has to be cancelled once it is reached.
+                var stopThread = new Thread(CancelAcceptUntilReaderEnds)
+                {
+                    IsBackground = true,
+                    Name = "MSBuild pipe logger stop"
+                };
+                stopThread.Start();
+            }
+
+            return;
+        }
+
         try
         {
             // Cancelling is idempotent, and a reader that is mid-drain finishes handing over that client's
@@ -198,23 +230,92 @@ public class NamedPipeLoggerServer : PipeLoggerServer<NamedPipeServerStream>
         // previous one is still being drained needs room to queue instead of being refused.
         var maximumServerInstances = acceptMultipleConnections ? NamedPipeServerStream.MaxAllowedServerInstances : 1;
 
-        // Overlapped, because both the accept and every read block a dedicated thread on an async call to
-        // get a CancellationToken. On a non-overlapped Windows handle those calls are emulated by running
-        // the blocking call on a pool thread, which parks a second thread per operation and, before .NET
-        // Core, could not cancel one already in flight — the stop would be silently ignored.
         return new NamedPipeServerStream(
             pipeName,
             PipeDirection.In,
             maximumServerInstances,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous);
+            UseBlockingCalls ? PipeOptions.None : PipeOptions.Asynchronous);
     }
 
     /// <summary>
     /// Waits for the next client, unless the server has been told to stop listening.
     /// </summary>
     /// <returns><see langword="true"/> if a client connected and should be read.</returns>
-    private bool WaitForNextConnection()
+    private bool WaitForNextConnection() =>
+        UseBlockingCalls ? WaitForNextConnectionBlocking() : WaitForNextConnectionAsynchronously();
+
+    /// <summary>
+    /// Windows: blocks the reader thread in the accept until a client connects or a stop cancels it.
+    /// </summary>
+    private bool WaitForNextConnectionBlocking()
+    {
+        // The accept is entered even when a stop was already requested: it returns at once for a client
+        // that has connected while the reader was busy, and the stop cancels it otherwise. A pipe instance
+        // only takes a client while it is listening, so no other client can be waiting.
+        lock (_acceptLock)
+        {
+            _accepting = true;
+        }
+
+        try
+        {
+            PipeStream.WaitForConnection();
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        finally
+        {
+            lock (_acceptLock)
+            {
+                _accepting = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Windows: cancels the accept of the reader thread, now or when it next reaches it, until that thread ends.
+    /// </summary>
+    /// <remarks>
+    /// The request is repeated because the reader can be about to enter the accept when it is made. It is
+    /// made under the lock the reader takes when the accept returns, so it cannot cancel a read instead.
+    /// </remarks>
+    private void CancelAcceptUntilReaderEnds()
+    {
+        while (IsTransportReaderAlive)
+        {
+            lock (_acceptLock)
+            {
+                if (_accepting && !TryCancelPendingIO())
+                {
+                    // The pipe is closed: cancellation or disposal ends the reader.
+                    return;
+                }
+            }
+
+            WaitForTransportReader(BlockingCallCancellationPeriod);
+        }
+    }
+
+    /// <summary>
+    /// Unix: blocks the reader thread on an asynchronous accept until a client connects or a stop cancels it.
+    /// </summary>
+    private bool WaitForNextConnectionAsynchronously()
     {
         // A stop that arrives before we reach the accept must not discard clients that have already
         // connected. The build process can finish writing a submission and exit while the reader is still

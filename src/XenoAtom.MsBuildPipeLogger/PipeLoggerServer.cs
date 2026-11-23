@@ -4,6 +4,8 @@
 
 using System.IO.Pipes;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace XenoAtom.MsBuildPipeLogger;
 
@@ -16,6 +18,9 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
     where TPipeStream : PipeStream
 {
     private static readonly TimeSpan ReaderShutdownTimeout = TimeSpan.FromSeconds(5);
+
+    // How long the reader thread is given to notice a cancelled blocking call before it is cancelled again.
+    private protected static readonly TimeSpan BlockingCallCancellationPeriod = TimeSpan.FromMilliseconds(10);
 
     private readonly PipeEventReader _eventReader;
     private readonly CancellationTokenRegistration _cancellationRegistration;
@@ -125,6 +130,24 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
         _readerThread.Start();
     }
 
+    /// <summary>
+    /// Gets a value indicating whether the transport is being torn down by cancellation or disposal, in
+    /// which case the reader thread must not start another blocking call.
+    /// </summary>
+    private protected bool IsPipeShutdownRequested => Volatile.Read(ref _pipeShutdownRequested) != 0;
+
+    /// <summary>
+    /// Gets a value indicating whether the thread that reads the transport is running.
+    /// </summary>
+    private protected bool IsTransportReaderAlive => _readerThread.IsAlive;
+
+    /// <summary>
+    /// Waits for the thread that reads the transport to end.
+    /// </summary>
+    /// <returns><see langword="true"/> if the thread has ended or was never started.</returns>
+    internal bool WaitForTransportReader(TimeSpan timeout) =>
+        Volatile.Read(ref _started) == 0 || _readerThread.Join(timeout);
+
     private void ReadFromTransport()
     {
         try
@@ -142,7 +165,7 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
                 // into the next client's bytes.
                 Buffer.WriteConnectionBoundary();
             }
-            while (TryAcceptNextConnection());
+            while (!IsPipeShutdownRequested && TryAcceptNextConnection());
         }
         catch (IOException)
         {
@@ -179,7 +202,7 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
     {
         try
         {
-            while (Buffer.FillFromStream(PipeStream, CancellationToken))
+            while (!IsPipeShutdownRequested && Buffer.FillFromStream(PipeStream, CancellationToken))
             {
             }
         }
@@ -291,6 +314,7 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
     {
         try
         {
+            CancelBlockingCallsOfReader();
             PipeStream.Dispose();
         }
         catch (ObjectDisposedException)
@@ -306,4 +330,68 @@ public abstract class PipeLoggerServer<TPipeStream> : PipeEventDispatcher, IPipe
         {
         }
     }
+
+    /// <summary>
+    /// Ends the blocking accept or read the reader thread may be in, before the pipe is disposed.
+    /// </summary>
+    /// <remarks>
+    /// On Windows, disposing a pipe does not interrupt a blocking call on a synchronous handle: the handle
+    /// stays open until that call returns, which for a read is whenever the client next writes or leaves.
+    /// Cancelling the I/O of the handle does interrupt it. The reader thread can be between two calls when
+    /// the request is made, so it is repeated until that thread ends; the thread starts no new call once
+    /// the shutdown is requested.
+    /// </remarks>
+    private void CancelBlockingCallsOfReader()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || PipeStream.IsAsync ||
+            Volatile.Read(ref _started) == 0 || Thread.CurrentThread.ManagedThreadId == _readerThread.ManagedThreadId)
+        {
+            return;
+        }
+
+        var deadline = DateTime.UtcNow + ReaderShutdownTimeout;
+        while (!_readerThread.Join(BlockingCallCancellationPeriod) && DateTime.UtcNow < deadline)
+        {
+            if (!TryCancelPendingIO())
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Cancels the I/O in progress on the pipe, whichever thread started it. Windows only.
+    /// </summary>
+    /// <returns><see langword="false"/> if the pipe has no handle to cancel on, or it is already closed.</returns>
+    private protected bool TryCancelPendingIO()
+    {
+        try
+        {
+            // The result is not checked: it fails with ERROR_NOT_FOUND when nothing is in progress.
+            WindowsPipeMethods.CancelIoEx(PipeStream.SafePipeHandle, IntPtr.Zero);
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            // The pipe has no handle yet.
+            return false;
+        }
+    }
+}
+
+/// <summary>
+/// The Windows functions the pipe servers call directly.
+/// </summary>
+internal static class WindowsPipeMethods
+{
+    /// <summary>
+    /// Cancels the I/O in progress on a handle, whichever thread started it, blocking calls included.
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CancelIoEx(SafePipeHandle handle, IntPtr overlapped);
 }

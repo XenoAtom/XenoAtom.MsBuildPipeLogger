@@ -12,7 +12,11 @@ namespace XenoAtom.MsBuildPipeLogger;
 /// </summary>
 public abstract class PipeWriter : IPipeWriter
 {
-    private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(30);
+    // How long the receiver may go without reading anything before the events left to write are dropped.
+    private static readonly TimeSpan DefaultStallTimeout = TimeSpan.FromSeconds(30);
+
+    // A large event is written in pieces, so that a receiver that reads it slowly is seen to make progress.
+    private const int WriteChunkSize = 64 * 1024;
 
     private readonly BlockingCollection<BuildEventArgs> _queue = new(new ConcurrentQueue<BuildEventArgs>());
 
@@ -24,6 +28,8 @@ public abstract class PipeWriter : IPipeWriter
     // Buffer writes through a memory stream since the args writer does a bunch of small writes
     private readonly MemoryStream _memoryStream = new();
 
+    private readonly TimeSpan _stallTimeout;
+    private long _bytesWritten;
     private int _disposed;
     private int _stopped;
 
@@ -33,8 +39,14 @@ public abstract class PipeWriter : IPipeWriter
     /// <param name="stream">The connected stream to write to.</param>
     /// <exception cref="ArgumentNullException"><paramref name="stream"/> is <see langword="null"/>.</exception>
     protected PipeWriter(Stream stream)
+        : this(stream, DefaultStallTimeout)
+    {
+    }
+
+    private protected PipeWriter(Stream stream, TimeSpan stallTimeout)
     {
         _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+        _stallTimeout = stallTimeout;
         _binaryWriter = new BinaryWriter(_memoryStream);
         _serializer = new PipeEventSerializer();
         var writerThread = new Thread(ProcessQueue)
@@ -61,13 +73,14 @@ public abstract class PipeWriter : IPipeWriter
         {
         }
 
-        var writerCompleted = _doneProcessing.Wait(DisposeTimeout);
+        var writerCompleted = WaitForWriter();
         if (!writerCompleted)
         {
             // A broken peer can block a pipe write indefinitely. Disposing the transport unblocks the
-            // background writer at the cost of dropping any data that could not be flushed in time.
+            // background writer at the cost of dropping the events that are left.
+            ReportDroppedEvents(_stallTimeout);
             DisposeStream();
-            writerCompleted = _doneProcessing.Wait(DisposeTimeout);
+            writerCompleted = _doneProcessing.Wait(_stallTimeout);
         }
 
         // Do not wait for the peer to drain the pipe here: a crashed or paused server could otherwise
@@ -109,6 +122,54 @@ public abstract class PipeWriter : IPipeWriter
         }
     }
 
+    /// <summary>
+    /// Waits for the background writer to write the events that are queued.
+    /// </summary>
+    /// <remarks>
+    /// A receiver can be slow without being broken, for example in a host process that is short of threads
+    /// while many builds run. The wait therefore goes on for as long as the receiver keeps reading, and
+    /// only ends when nothing was written for the whole stall timeout.
+    /// </remarks>
+    /// <returns><see langword="true"/> if every queued event was written or the transport failed;
+    /// <see langword="false"/> if the receiver stopped reading.</returns>
+    private bool WaitForWriter()
+    {
+        while (true)
+        {
+            var bytesWritten = Interlocked.Read(ref _bytesWritten);
+            if (_doneProcessing.Wait(_stallTimeout))
+            {
+                return true;
+            }
+
+            if (Interlocked.Read(ref _bytesWritten) == bytesWritten)
+            {
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reports that the receiver stopped reading and that the remaining events are dropped.
+    /// </summary>
+    /// <remarks>
+    /// The build is not failed for it, but a receiver that then misses the end of the build needs a trace
+    /// of the reason, and the standard error of the build process is the only place left to leave one.
+    /// </remarks>
+    private protected virtual void ReportDroppedEvents(TimeSpan stallTimeout)
+    {
+        try
+        {
+            Console.Error.WriteLine(
+                $"XenoAtom.MsBuildPipeLogger: the receiver of the pipe read nothing for {stallTimeout.TotalSeconds:0.#} seconds. " +
+                "The build events that were not sent yet are dropped.");
+        }
+        catch (Exception)
+        {
+            // Reporting is best effort.
+        }
+    }
+
     private void ProcessQueue()
     {
         try
@@ -135,7 +196,15 @@ public abstract class PipeWriter : IPipeWriter
                 }
 
                 // ...then write that to the pipe
-                _memoryStream.WriteTo(_stream);
+                var buffer = _memoryStream.GetBuffer();
+                var length = (int)_memoryStream.Length;
+                for (var offset = 0; offset < length; offset += WriteChunkSize)
+                {
+                    var count = Math.Min(WriteChunkSize, length - offset);
+                    _stream.Write(buffer, offset, count);
+                    Interlocked.Add(ref _bytesWritten, count);
+                }
+
                 _stream.Flush();
             }
         }
