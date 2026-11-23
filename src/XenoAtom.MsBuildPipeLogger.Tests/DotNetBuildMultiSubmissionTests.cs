@@ -108,6 +108,7 @@ public class DotNetBuildMultiSubmissionTests
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
+        DotNetProcess.RemoveInheritedSdkVariables(process.StartInfo);
         process.StartInfo.ArgumentList.Add("build");
         process.StartInfo.ArgumentList.Add(projectPath);
         process.StartInfo.ArgumentList.Add("-c");

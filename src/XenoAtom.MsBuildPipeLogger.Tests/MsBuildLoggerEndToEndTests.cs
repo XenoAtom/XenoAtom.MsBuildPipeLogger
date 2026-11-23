@@ -82,6 +82,7 @@ public class MsBuildLoggerEndToEndTests
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
+        DotNetProcess.RemoveInheritedSdkVariables(process.StartInfo);
         process.StartInfo.ArgumentList.Add("msbuild");
         process.StartInfo.ArgumentList.Add(projectPath);
         process.StartInfo.ArgumentList.Add("/nologo");
