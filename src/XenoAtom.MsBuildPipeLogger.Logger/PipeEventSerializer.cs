@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Collections;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
 using Microsoft.Build.Framework;
@@ -271,6 +272,11 @@ internal sealed class PipeEventSerializer
             {
                 entries.Add((kvp.Key, kvp.Value));
             }
+            else if (item is not null && ReadMember(item, "Name") is string name)
+            {
+                // A live ProjectPropertyInstance.
+                entries.Add((name, ReadMember(item, "EvaluatedValue") as string));
+            }
         }
 
         w.Write7Bit(entries.Count);
@@ -295,6 +301,22 @@ internal sealed class PipeEventSerializer
             if (item is DictionaryEntry entry)
             {
                 entries.Add(entry);
+            }
+            else if (item is ITaskItem taskItem && ReadMember(item, "ItemType") is string itemType)
+            {
+                // A live ProjectItemInstance, as an IEnumerable<ProjectItemInstance> yields them.
+                entries.Add(new DictionaryEntry(itemType, taskItem));
+            }
+            else if (item is not null
+                && ReadMember(item, "Key") is string groupItemType
+                && ReadMember(item, "Value") is IEnumerable group and not string)
+            {
+                // A live ItemDictionary enumerated through the non-generic IEnumerable yields one
+                // KeyValuePair<string, List<ProjectItemInstance>> per item type.
+                foreach (var member in group)
+                {
+                    entries.Add(new DictionaryEntry(groupItemType, member));
+                }
             }
         }
 
@@ -343,6 +365,20 @@ internal sealed class PipeEventSerializer
             WriteMetadata(w, taskItem);
         }
     }
+
+    // Reads a public instance property by name, for the Microsoft.Build.dll objects that a live build hands to
+    // loggers as evaluation data. Microsoft.Build.Framework has no interface for them, the ItemDictionary that
+    // holds the items is internal, and their exact types vary across the MSBuild versions this logger supports,
+    // so they are matched by member name like the rest of the serializer's version-dependent members. The
+    // members read are the ones MSBuild's own binary log writer reads. The logger runs inside MSBuild, which is
+    // never trimmed.
+    private static readonly ConcurrentDictionary<(Type Type, string Member), PropertyInfo?> Members = new();
+
+    private static object? ReadMember(object instance, string member) =>
+        Members.GetOrAdd(
+            (instance.GetType(), member),
+            static key => key.Type.GetProperty(key.Member, BindingFlags.Public | BindingFlags.Instance))
+            ?.GetValue(instance);
 
     // Writes a possibly-null BuildEventContext as a presence flag followed by its identifiers. Mirrors the
     // context layout in WireBaseFields, but appears among the event-specific fields rather than the header.
