@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 // See license.txt file in the project root for full license information.
 
+using System.Collections;
 using System.IO;
 using System.Linq;
 using Microsoft.Build.Framework;
@@ -110,6 +111,83 @@ public class BuildEventSerializationTests
         Assert.AreEqual(string.Empty, tf.TargetOutputs[0].ItemType);
         var culture = tf.TargetOutputs[0].Metadata.Single(m => m.Name == "Culture");
         Assert.AreEqual("en-US", culture.Value);
+    }
+
+    [TestMethod]
+    public void RoundTripsEvaluationDataInTheShapesOfALiveBuild()
+    {
+        // A live build hands loggers MSBuild's own objects as evaluation data: ProjectPropertyInstances, and an
+        // ItemDictionary that enumerates as flat ProjectItemInstances through IEnumerable<T> but as one
+        // KeyValuePair<string, List<ProjectItemInstance>> per item type through the non-generic IEnumerable. The
+        // fakes have the same public members. A replayed binary log carries DictionaryEntry pairs instead.
+        var properties = new object[]
+        {
+            new DictionaryEntry("FromEntry", "1"),
+            new KeyValuePair<string, string>("FromPair", "2"),
+            new FakePropertyInstance("FromInstance", "3"),
+        };
+
+        var flatItems = new object[]
+        {
+            new DictionaryEntry("Reference", new Microsoft.Build.Utilities.TaskItem("System.dll")),
+            new FakeItemInstance("Compile", "A.cs", ("Custom", "Value")),
+            new KeyValuePair<string, string>("NotAnItem", "is skipped, not split into characters"),
+        };
+
+        var groupedItems = new FakeItemDictionary(
+            new FakeItemInstance("Compile", "A.cs", ("Custom", "Value")),
+            new FakeItemInstance("Compile", "B.cs"),
+            new FakeItemInstance("None", "readme.md"));
+
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        var serializer = new PipeEventSerializer();
+        serializer.Write(binaryWriter, new ProjectEvaluationFinishedEventArgs("flat") { ProjectFile = "Foo.csproj", Properties = properties, Items = flatItems });
+        serializer.Write(binaryWriter, new ProjectEvaluationFinishedEventArgs("grouped") { ProjectFile = "Foo.csproj", Items = groupedItems });
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var events = ReadAllEvents(memory);
+        Assert.AreEqual(2, events.Count);
+
+        var flat = (PipeProjectEvaluationFinishedEventArgs)events[0];
+        CollectionAssert.AreEqual(
+            new[] { "FromEntry=1", "FromPair=2", "FromInstance=3" },
+            flat.Properties.Select(p => $"{p.Name}={p.Value}").ToArray());
+        CollectionAssert.AreEqual(
+            new[] { "Reference:System.dll", "Compile:A.cs" },
+            flat.Items.Select(i => $"{i.ItemType}:{i.EvaluatedInclude}").ToArray());
+        Assert.AreEqual("Value", flat.Items[1].Metadata.Single(m => m.Name == "Custom").Value);
+
+        var grouped = (PipeProjectEvaluationFinishedEventArgs)events[1];
+        CollectionAssert.AreEqual(
+            new[] { "Compile:A.cs", "Compile:B.cs", "None:readme.md" },
+            grouped.Items.Select(i => $"{i.ItemType}:{i.EvaluatedInclude}").ToArray());
+        Assert.AreEqual("Value", grouped.Items[0].Metadata.Single(m => m.Name == "Custom").Value);
+    }
+
+    [TestMethod]
+    public void ReadsLiveItemsThroughTheLockedCopyOfTheirDictionary()
+    {
+        // The targets of a project change its ItemDictionary while the logger's writer thread serializes the
+        // event that carries it, and the dictionary's enumerators take no lock. The serializer has to read it
+        // through GetCopyOnReadEnumerable, which copies under the dictionary's lock.
+        var items = new FakeLockedItemDictionary(
+            new FakeItemInstance("Compile", "A.cs", ("Custom", "Value")),
+            new FakeItemInstance("None", "readme.md"));
+
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        new PipeEventSerializer().Write(binaryWriter, new ProjectEvaluationFinishedEventArgs("locked") { ProjectFile = "Foo.csproj", Items = items });
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var evaluation = (PipeProjectEvaluationFinishedEventArgs)ReadAllEvents(memory).Single();
+        CollectionAssert.AreEqual(
+            new[] { "Compile:A.cs", "None:readme.md" },
+            evaluation.Items.Select(i => $"{i.ItemType}:{i.EvaluatedInclude}").ToArray());
+        Assert.AreEqual("Value", evaluation.Items[0].Metadata.Single(m => m.Name == "Custom").Value);
+        Assert.AreEqual(1, items.LockedCopies);
     }
 
     [TestMethod]
@@ -536,6 +614,96 @@ public class BuildEventSerializationTests
         }
 
         writer.Write((byte)v);
+    }
+
+    // Has the public members of Microsoft.Build.Execution.ProjectPropertyInstance that the serializer reads.
+    private sealed class FakePropertyInstance
+    {
+        public FakePropertyInstance(string name, string evaluatedValue)
+        {
+            Name = name;
+            EvaluatedValue = evaluatedValue;
+        }
+
+        public string Name { get; }
+
+        public string EvaluatedValue { get; }
+    }
+
+    // Has the public members of Microsoft.Build.Execution.ProjectItemInstance that the serializer reads.
+    private sealed class FakeItemInstance : ITaskItem
+    {
+        private readonly Microsoft.Build.Utilities.TaskItem _item;
+
+        public FakeItemInstance(string itemType, string itemSpec, params (string Name, string Value)[] metadata)
+        {
+            ItemType = itemType;
+            _item = new Microsoft.Build.Utilities.TaskItem(itemSpec);
+            foreach (var (name, value) in metadata)
+            {
+                _item.SetMetadata(name, value);
+            }
+        }
+
+        public string ItemType { get; }
+
+        public string ItemSpec
+        {
+            get => _item.ItemSpec;
+            set => _item.ItemSpec = value;
+        }
+
+        public ICollection MetadataNames => _item.MetadataNames;
+
+        public int MetadataCount => _item.MetadataCount;
+
+        public string GetMetadata(string metadataName) => _item.GetMetadata(metadataName);
+
+        public void SetMetadata(string metadataName, string metadataValue) => _item.SetMetadata(metadataName, metadataValue);
+
+        public void RemoveMetadata(string metadataName) => _item.RemoveMetadata(metadataName);
+
+        public void CopyMetadataTo(ITaskItem destinationItem) => _item.CopyMetadataTo(destinationItem);
+
+        public IDictionary CloneCustomMetadata() => _item.CloneCustomMetadata();
+    }
+
+    // Enumerates like Microsoft.Build.Collections.ItemDictionary<T>: flat through IEnumerable<T>, grouped by
+    // item type through the non-generic IEnumerable, which is the one the serializer uses.
+    private sealed class FakeItemDictionary : IEnumerable<FakeItemInstance>
+    {
+        private readonly FakeItemInstance[] _items;
+
+        public FakeItemDictionary(params FakeItemInstance[] items) => _items = items;
+
+        public IEnumerator<FakeItemInstance> GetEnumerator() => ((IEnumerable<FakeItemInstance>)_items).GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() =>
+            _items
+                .GroupBy(i => i.ItemType)
+                .Select(g => new KeyValuePair<string, List<FakeItemInstance>>(g.Key, g.ToList()))
+                .GetEnumerator();
+    }
+
+    // Like Microsoft.Build.Collections.ItemDictionary<T>, has a GetCopyOnReadEnumerable that copies the items
+    // under its lock. Its enumerators, which take no lock, fail the test when they are used.
+    private sealed class FakeLockedItemDictionary : IEnumerable<FakeItemInstance>
+    {
+        private readonly FakeItemInstance[] _items;
+
+        public FakeLockedItemDictionary(params FakeItemInstance[] items) => _items = items;
+
+        public int LockedCopies { get; private set; }
+
+        public IEnumerable<TResult> GetCopyOnReadEnumerable<TResult>(Func<FakeItemInstance, TResult> selector)
+        {
+            LockedCopies++;
+            return _items.Select(selector).ToList();
+        }
+
+        public IEnumerator<FakeItemInstance> GetEnumerator() => throw new InvalidOperationException("Collection was modified.");
+
+        IEnumerator IEnumerable.GetEnumerator() => throw new InvalidOperationException("Collection was modified.");
     }
 
     private sealed class SerializerPipeWriter : IPipeWriter

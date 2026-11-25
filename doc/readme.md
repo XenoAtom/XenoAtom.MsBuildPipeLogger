@@ -48,6 +48,8 @@ The pipe format is a deliberately curated projection of MSBuild's events, not a 
 - `PipeTargetFinishedEventArgs`: target/project/target-file names, success, and the target's **output items** (`TargetOutputs`, populated only when the build enables target-output logging).
 - `PipeProjectEvaluationFinishedEventArgs` / `PipeTaskParameterEventArgs`: evaluated properties and items, and resolved task inputs/outputs.
 
+A project's evaluated properties and items arrive on one of two events. By default MSBuild puts them on `PipeProjectStartedEventArgs`. As soon as any logger in the build asks for them after evaluation, MSBuild moves them to `PipeProjectEvaluationFinishedEventArgs` for every logger, and `PipeProjectStartedEventArgs` arrives with them empty. The binary logger (`-bl`), the dotnet CLI telemetry logger and `MSBUILDLOGPROPERTIESANDITEMSAFTEREVALUATION=1` all ask for them after evaluation. From MSBuild 18.0 (the .NET 10 SDK) the default console logger asks for them too, so a plain `dotnet build` delivers them on `PipeProjectEvaluationFinishedEventArgs` only. A receiver that needs them should read both events.
+
 The wire format is **append-only**: fields are only ever added to the end of a record, never removed or reordered. A newer writer can therefore stream to an older receiver (which ignores trailing bytes it does not understand), and a newer receiver reads records from an older writer by treating the absent trailing fields as their defaults. If you rely on an MSBuild event field that is not currently projected, it can be added the same way — open an issue or PR.
 
 ## Transports

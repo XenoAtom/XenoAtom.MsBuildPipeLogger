@@ -3,6 +3,7 @@
 // See license.txt file in the project root for full license information.
 
 using System.Collections;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Reflection;
 using Microsoft.Build.Framework;
@@ -271,6 +272,11 @@ internal sealed class PipeEventSerializer
             {
                 entries.Add((kvp.Key, kvp.Value));
             }
+            else if (item is not null && ReadMember(item, "Name") is string name)
+            {
+                // A live ProjectPropertyInstance.
+                entries.Add((name, ReadMember(item, "EvaluatedValue") as string));
+            }
         }
 
         w.Write7Bit(entries.Count);
@@ -290,11 +296,27 @@ internal sealed class PipeEventSerializer
         }
 
         var entries = new List<DictionaryEntry>();
-        foreach (var item in items)
+        foreach (var item in CopyLiveItems(items))
         {
             if (item is DictionaryEntry entry)
             {
                 entries.Add(entry);
+            }
+            else if (item is ITaskItem taskItem && ReadMember(item, "ItemType") is string itemType)
+            {
+                // A live ProjectItemInstance, as an IEnumerable<ProjectItemInstance> yields them.
+                entries.Add(new DictionaryEntry(itemType, taskItem));
+            }
+            else if (item is not null
+                && ReadMember(item, "Key") is string groupItemType
+                && ReadMember(item, "Value") is IEnumerable group and not string)
+            {
+                // A live ItemDictionary enumerated through the non-generic IEnumerable yields one
+                // KeyValuePair<string, List<ProjectItemInstance>> per item type.
+                foreach (var member in group)
+                {
+                    entries.Add(new DictionaryEntry(groupItemType, member));
+                }
             }
         }
 
@@ -342,6 +364,60 @@ internal sealed class PipeEventSerializer
             w.Write(taskItem.ItemSpec ?? string.Empty);
             WriteMetadata(w, taskItem);
         }
+    }
+
+    // Reads a public instance property by name, for the Microsoft.Build.dll objects that a live build hands to
+    // loggers as evaluation data. Microsoft.Build.Framework has no interface for them, the ItemDictionary that
+    // holds the items is internal, and their exact types vary across the MSBuild versions this logger supports,
+    // so they are matched by member name like the rest of the serializer's version-dependent members. The
+    // members read are the ones MSBuild's own binary log writer reads. The logger runs inside MSBuild, which is
+    // never trimmed.
+    private static readonly ConcurrentDictionary<(Type Type, string Member), PropertyInfo?> Members = new();
+
+    private static object? ReadMember(object instance, string member) =>
+        Members.GetOrAdd(
+            (instance.GetType(), member),
+            static key => key.Type.GetProperty(key.Member, BindingFlags.Public | BindingFlags.Instance))
+            ?.GetValue(instance);
+
+    // The ItemDictionary that a live build hands out as a project's evaluated items is the one the project's
+    // targets then change, on the build thread, while this serializer runs on the logger's writer thread. Its
+    // enumerators take no lock, so reading it through them can fail part-way and lose the whole event. Its
+    // GetCopyOnReadEnumerable copies the items under the dictionary's own lock: it is what MSBuild itself reads
+    // the items of ProjectStarted through. Collections without that method are enumerated as they are.
+    private static readonly ConcurrentDictionary<Type, MethodInfo?> CopyOnReadMethods = new();
+
+    private static readonly Func<object, object> Identity = static item => item;
+
+    private static IEnumerable CopyLiveItems(IEnumerable items) =>
+        CopyOnReadMethods.GetOrAdd(items.GetType(), static type => FindCopyOnReadMethod(type))
+            ?.Invoke(items, new object[] { Identity }) as IEnumerable ?? items;
+
+    // Finds GetCopyOnReadEnumerable<TResult>(Func<T, TResult>), closed over object. The items are reference
+    // types, so the identity selector converts to the Func<T, object> it takes.
+    private static MethodInfo? FindCopyOnReadMethod(Type type)
+    {
+        foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (method.Name != "GetCopyOnReadEnumerable" || !method.IsGenericMethodDefinition || method.GetGenericArguments().Length != 1)
+            {
+                continue;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 1 || !parameters[0].ParameterType.IsGenericType || parameters[0].ParameterType.GetGenericTypeDefinition() != typeof(Func<,>))
+            {
+                continue;
+            }
+
+            var selector = method.MakeGenericMethod(typeof(object));
+            if (selector.GetParameters()[0].ParameterType.IsAssignableFrom(typeof(Func<object, object>)))
+            {
+                return selector;
+            }
+        }
+
+        return null;
     }
 
     // Writes a possibly-null BuildEventContext as a presence flag followed by its identifiers. Mirrors the
