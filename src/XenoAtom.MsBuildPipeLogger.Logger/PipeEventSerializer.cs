@@ -296,7 +296,7 @@ internal sealed class PipeEventSerializer
         }
 
         var entries = new List<DictionaryEntry>();
-        foreach (var item in items)
+        foreach (var item in CopyLiveItems(items))
         {
             if (item is DictionaryEntry entry)
             {
@@ -379,6 +379,46 @@ internal sealed class PipeEventSerializer
             (instance.GetType(), member),
             static key => key.Type.GetProperty(key.Member, BindingFlags.Public | BindingFlags.Instance))
             ?.GetValue(instance);
+
+    // The ItemDictionary that a live build hands out as a project's evaluated items is the one the project's
+    // targets then change, on the build thread, while this serializer runs on the logger's writer thread. Its
+    // enumerators take no lock, so reading it through them can fail part-way and lose the whole event. Its
+    // GetCopyOnReadEnumerable copies the items under the dictionary's own lock: it is what MSBuild itself reads
+    // the items of ProjectStarted through. Collections without that method are enumerated as they are.
+    private static readonly ConcurrentDictionary<Type, MethodInfo?> CopyOnReadMethods = new();
+
+    private static readonly Func<object, object> Identity = static item => item;
+
+    private static IEnumerable CopyLiveItems(IEnumerable items) =>
+        CopyOnReadMethods.GetOrAdd(items.GetType(), static type => FindCopyOnReadMethod(type))
+            ?.Invoke(items, new object[] { Identity }) as IEnumerable ?? items;
+
+    // Finds GetCopyOnReadEnumerable<TResult>(Func<T, TResult>), closed over object. The items are reference
+    // types, so the identity selector converts to the Func<T, object> it takes.
+    private static MethodInfo? FindCopyOnReadMethod(Type type)
+    {
+        foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (method.Name != "GetCopyOnReadEnumerable" || !method.IsGenericMethodDefinition || method.GetGenericArguments().Length != 1)
+            {
+                continue;
+            }
+
+            var parameters = method.GetParameters();
+            if (parameters.Length != 1 || !parameters[0].ParameterType.IsGenericType || parameters[0].ParameterType.GetGenericTypeDefinition() != typeof(Func<,>))
+            {
+                continue;
+            }
+
+            var selector = method.MakeGenericMethod(typeof(object));
+            if (selector.GetParameters()[0].ParameterType.IsAssignableFrom(typeof(Func<object, object>)))
+            {
+                return selector;
+            }
+        }
+
+        return null;
+    }
 
     // Writes a possibly-null BuildEventContext as a presence flag followed by its identifiers. Mirrors the
     // context layout in WireBaseFields, but appears among the event-specific fields rather than the header.

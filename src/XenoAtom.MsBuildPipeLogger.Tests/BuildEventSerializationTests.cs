@@ -167,6 +167,30 @@ public class BuildEventSerializationTests
     }
 
     [TestMethod]
+    public void ReadsLiveItemsThroughTheLockedCopyOfTheirDictionary()
+    {
+        // The targets of a project change its ItemDictionary while the logger's writer thread serializes the
+        // event that carries it, and the dictionary's enumerators take no lock. The serializer has to read it
+        // through GetCopyOnReadEnumerable, which copies under the dictionary's lock.
+        var items = new FakeLockedItemDictionary(
+            new FakeItemInstance("Compile", "A.cs", ("Custom", "Value")),
+            new FakeItemInstance("None", "readme.md"));
+
+        using var memory = new MemoryStream();
+        using var binaryWriter = new BinaryWriter(memory);
+        new PipeEventSerializer().Write(binaryWriter, new ProjectEvaluationFinishedEventArgs("locked") { ProjectFile = "Foo.csproj", Items = items });
+        binaryWriter.Flush();
+
+        memory.Position = 0;
+        var evaluation = (PipeProjectEvaluationFinishedEventArgs)ReadAllEvents(memory).Single();
+        CollectionAssert.AreEqual(
+            new[] { "Compile:A.cs", "None:readme.md" },
+            evaluation.Items.Select(i => $"{i.ItemType}:{i.EvaluatedInclude}").ToArray());
+        Assert.AreEqual("Value", evaluation.Items[0].Metadata.Single(m => m.Name == "Custom").Value);
+        Assert.AreEqual(1, items.LockedCopies);
+    }
+
+    [TestMethod]
     public void PipeTargetBuiltReasonMirrorsMsBuildAndRoundTripsEveryValue()
     {
         // The pipe enum must reproduce Microsoft.Build.Framework.TargetBuiltReason member for
@@ -659,6 +683,27 @@ public class BuildEventSerializationTests
                 .GroupBy(i => i.ItemType)
                 .Select(g => new KeyValuePair<string, List<FakeItemInstance>>(g.Key, g.ToList()))
                 .GetEnumerator();
+    }
+
+    // Like Microsoft.Build.Collections.ItemDictionary<T>, has a GetCopyOnReadEnumerable that copies the items
+    // under its lock. Its enumerators, which take no lock, fail the test when they are used.
+    private sealed class FakeLockedItemDictionary : IEnumerable<FakeItemInstance>
+    {
+        private readonly FakeItemInstance[] _items;
+
+        public FakeLockedItemDictionary(params FakeItemInstance[] items) => _items = items;
+
+        public int LockedCopies { get; private set; }
+
+        public IEnumerable<TResult> GetCopyOnReadEnumerable<TResult>(Func<FakeItemInstance, TResult> selector)
+        {
+            LockedCopies++;
+            return _items.Select(selector).ToList();
+        }
+
+        public IEnumerator<FakeItemInstance> GetEnumerator() => throw new InvalidOperationException("Collection was modified.");
+
+        IEnumerator IEnumerable.GetEnumerator() => throw new InvalidOperationException("Collection was modified.");
     }
 
     private sealed class SerializerPipeWriter : IPipeWriter
